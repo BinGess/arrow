@@ -14,10 +14,13 @@ import 'level_validator.dart';
 /// To maximize difficulty, we SCORE each candidate placement by how many
 /// already-placed arrows it BLOCKS (its body occupies cells in their flight
 /// paths). More blocking = harder puzzle = deeper dependency chains.
+///
+/// Each level uses a deterministic seed (based on level number) so the
+/// same level always produces the same puzzle layout.
 class LevelGenerator {
-  final Random _random;
+  final int? _baseSeed;
 
-  LevelGenerator({int? seed}) : _random = Random(seed);
+  LevelGenerator({int? seed}) : _baseSeed = seed;
 
   static ({
     int rows,
@@ -28,51 +31,56 @@ class LevelGenerator {
     double lTailChance, // probability of L-shaped tail when eligible
     int minDepth,
   }) configForLevel(int level) {
-    // More arrows, more tails, more L-shapes at every tier
-    if (level <= 2) {
-      return (rows: 6, cols: 5, count: 8, maxTail: 1, lTails: false, lTailChance: 0.0, minDepth: 2);
+    // Difficulty curve: starts hard (matching reference ~55 arrows on 14x11)
+    // and scales up from there.
+    if (level <= 1) {
+      return (rows: 14, cols: 11, count: 55, maxTail: 5, lTails: true, lTailChance: 0.6, minDepth: 6);
     }
-    if (level <= 4) {
-      return (rows: 7, cols: 6, count: 14, maxTail: 2, lTails: true, lTailChance: 0.3, minDepth: 3);
+    if (level <= 3) {
+      return (rows: 14, cols: 11, count: 58, maxTail: 5, lTails: true, lTailChance: 0.6, minDepth: 7);
     }
-    if (level <= 6) {
-      return (rows: 8, cols: 6, count: 18, maxTail: 3, lTails: true, lTailChance: 0.4, minDepth: 4);
+    if (level <= 5) {
+      return (rows: 14, cols: 11, count: 62, maxTail: 5, lTails: true, lTailChance: 0.6, minDepth: 7);
     }
     if (level <= 8) {
-      return (rows: 9, cols: 7, count: 24, maxTail: 3, lTails: true, lTailChance: 0.45, minDepth: 5);
+      return (rows: 14, cols: 11, count: 65, maxTail: 6, lTails: true, lTailChance: 0.6, minDepth: 8);
     }
-    if (level <= 10) {
-      return (rows: 10, cols: 8, count: 30, maxTail: 4, lTails: true, lTailChance: 0.5, minDepth: 6);
-    }
-    if (level <= 13) {
-      return (rows: 11, cols: 8, count: 36, maxTail: 4, lTails: true, lTailChance: 0.55, minDepth: 7);
+    if (level <= 12) {
+      return (rows: 14, cols: 11, count: 68, maxTail: 6, lTails: true, lTailChance: 0.65, minDepth: 8);
     }
     if (level <= 16) {
-      return (rows: 12, cols: 9, count: 44, maxTail: 5, lTails: true, lTailChance: 0.55, minDepth: 8);
+      return (rows: 15, cols: 12, count: 72, maxTail: 6, lTails: true, lTailChance: 0.65, minDepth: 9);
     }
     if (level <= 20) {
-      return (rows: 13, cols: 10, count: 52, maxTail: 5, lTails: true, lTailChance: 0.6, minDepth: 9);
+      return (rows: 15, cols: 12, count: 78, maxTail: 7, lTails: true, lTailChance: 0.65, minDepth: 10);
     }
     if (level <= 25) {
-      return (rows: 14, cols: 10, count: 60, maxTail: 6, lTails: true, lTailChance: 0.6, minDepth: 10);
+      return (rows: 15, cols: 12, count: 82, maxTail: 7, lTails: true, lTailChance: 0.65, minDepth: 10);
     }
     if (level <= 30) {
-      return (rows: 14, cols: 11, count: 68, maxTail: 6, lTails: true, lTailChance: 0.65, minDepth: 11);
+      return (rows: 16, cols: 13, count: 88, maxTail: 7, lTails: true, lTailChance: 0.7, minDepth: 11);
     }
     if (level <= 40) {
-      return (rows: 15, cols: 12, count: 78, maxTail: 7, lTails: true, lTailChance: 0.65, minDepth: 12);
+      return (rows: 16, cols: 13, count: 95, maxTail: 8, lTails: true, lTailChance: 0.7, minDepth: 12);
     }
-    return (rows: 16, cols: 13, count: 90, maxTail: 8, lTails: true, lTailChance: 0.7, minDepth: 13);
+    return (rows: 16, cols: 13, count: 100, maxTail: 8, lTails: true, lTailChance: 0.7, minDepth: 13);
   }
 
   /// Generate a validated, solvable level.
+  ///
+  /// Uses a deterministic seed per level so the same level number
+  /// always produces the same puzzle layout.
   ({List<Arrow> arrows, int rows, int cols}) generate(int levelNumber) {
     final config = configForLevel(levelNumber);
 
     for (var attempt = 0; attempt < 10; attempt++) {
+      // Deterministic seed: same level + attempt always gives same puzzle
+      final seed = _baseSeed ?? (levelNumber * 1000 + attempt * 7 + 42);
+      final random = Random(seed + attempt);
       final result = _generateLevel(
         config.rows, config.cols, config.count,
         config.maxTail, config.lTails, config.lTailChance, config.minDepth,
+        random,
       );
 
       // Validate solvability
@@ -93,12 +101,14 @@ class LevelGenerator {
     }
 
     // Fallback: generate a simple guaranteed-solvable level
-    return _generateSimple(config.rows, config.cols, config.count);
+    final fallbackRandom = Random(_baseSeed ?? (levelNumber * 1000 + 99));
+    return _generateSimple(config.rows, config.cols, config.count, fallbackRandom);
   }
 
   ({List<Arrow> arrows, int rows, int cols}) _generateLevel(
     int rows, int cols, int targetCount,
     int maxTail, bool allowLTails, double lTailChance, int minDepth,
+    Random random,
   ) {
     final placed = <Arrow>[]; // Placement order (reverse of solution)
     final occupied = <(int, int)>{};
@@ -114,20 +124,20 @@ class LevelGenerator {
       // Higher minimum tail: at least 1 for early arrows, scaling down
       final minTail = maxTail > 0 ? max(0, (tailBudget * 0.5).round()) : 0;
       final tailLen = tailBudget > 0
-          ? minTail + _random.nextInt(tailBudget - minTail + 1)
+          ? minTail + random.nextInt(tailBudget - minTail + 1)
           : 0;
       final useLTail = allowLTails && tailLen >= 2 &&
-          _random.nextDouble() < lTailChance;
+          random.nextDouble() < lTailChance;
 
       final arrow = _placeBestArrow(
-        rows, cols, occupied, placed, nextId, tailLen, useLTail,
+        rows, cols, occupied, placed, nextId, tailLen, useLTail, random,
       );
 
       if (arrow == null) {
         // Try without tail
         if (tailLen > 0) {
           final fallback = _placeBestArrow(
-            rows, cols, occupied, placed, nextId, 0, false,
+            rows, cols, occupied, placed, nextId, 0, false, random,
           );
           if (fallback != null) {
             placed.add(fallback);
@@ -145,7 +155,7 @@ class LevelGenerator {
     }
 
     // Shuffle so the player can't guess the solution from list order
-    final arrows = List.of(placed)..shuffle(_random);
+    final arrows = List.of(placed)..shuffle(random);
     return (arrows: arrows, rows: rows, cols: cols);
   }
 
@@ -154,7 +164,7 @@ class LevelGenerator {
   /// 2. Maximizes blocking of already-placed arrows (for difficulty)
   Arrow? _placeBestArrow(
     int rows, int cols, Set<(int, int)> occupied,
-    List<Arrow> placed, int id, int tailLen, bool useLTail,
+    List<Arrow> placed, int id, int tailLen, bool useLTail, Random random,
   ) {
     // Pre-compute flight paths of all placed arrows for scoring
     final placedPaths = <int, Set<(int, int)>>{};
@@ -206,7 +216,7 @@ class LevelGenerator {
             }
 
             // Add randomness to avoid identical puzzles
-            score = score * 10 + _random.nextInt(5);
+            score = score * 10 + random.nextInt(5);
 
             if (score > bestScore) {
               bestScore = score;
@@ -222,12 +232,12 @@ class LevelGenerator {
     if (bestArrow.isEmpty) return null;
 
     // Pick randomly among the best candidates
-    return bestArrow[_random.nextInt(bestArrow.length)];
+    return bestArrow[random.nextInt(bestArrow.length)];
   }
 
   /// Simple fallback generator (always solvable, easier).
   ({List<Arrow> arrows, int rows, int cols}) _generateSimple(
-    int rows, int cols, int targetCount,
+    int rows, int cols, int targetCount, Random random,
   ) {
     final arrows = <Arrow>[];
     final occupied = <(int, int)>{};
@@ -248,13 +258,13 @@ class LevelGenerator {
         }
       }
       if (candidates.isEmpty) break;
-      final arrow = candidates[_random.nextInt(candidates.length)];
+      final arrow = candidates[random.nextInt(candidates.length)];
       arrows.add(arrow);
       occupied.add((arrow.row, arrow.col));
       nextId++;
     }
 
-    arrows.shuffle(_random);
+    arrows.shuffle(random);
     return (arrows: arrows, rows: rows, cols: cols);
   }
 
