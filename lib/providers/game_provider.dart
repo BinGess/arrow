@@ -28,18 +28,12 @@ class GameProvider extends ChangeNotifier {
   GameState? _gameState;
   GameState? get gameState => _gameState;
 
-  /// The original arrows for the current level (for reset).
   List<Arrow> _originalArrows = [];
-
   final Map<int, int> _levelStars = {};
 
-  /// Arrow currently flying (for animation).
-  Arrow? _flyingArrow;
-  Arrow? get flyingArrow => _flyingArrow;
-
-  /// Whether a fly animation is in progress.
-  bool _isAnimating = false;
-  bool get isAnimating => _isAnimating;
+  /// Currently flying arrows (supports multiple simultaneous fly-outs).
+  final List<Arrow> _flyingArrows = [];
+  List<Arrow> get flyingArrows => List.unmodifiable(_flyingArrows);
 
   GameProvider() {
     _loadProgress();
@@ -68,7 +62,6 @@ class GameProvider extends ChangeNotifier {
 
   int starsForLevel(int level) => _levelStars[level] ?? 0;
 
-  /// Start a specific level.
   void startLevel(int levelNumber) {
     _currentLevelNumber = levelNumber;
     final result = _generator.generate(levelNumber);
@@ -77,65 +70,58 @@ class GameProvider extends ChangeNotifier {
     _originalArrows = List.of(result.arrows);
     _engine = GameEngine(rows: _gridRows, cols: _gridCols);
     _gameState = _engine!.createInitialState(result.arrows);
-    _flyingArrow = null;
-    _isAnimating = false;
+    _flyingArrows.clear();
     notifyListeners();
   }
 
-  /// Tap an arrow to try to fly it out.
+  /// Tap an arrow. No animation blocking - taps are always responsive.
   void tapArrow(int arrowId) {
     if (_engine == null || _gameState == null) return;
-    if (_isAnimating) return;
     if (_gameState!.isComplete || _gameState!.isGameOver) return;
 
-    // Find the arrow being tapped
     final arrow = _gameState!.remainingArrows
         .where((a) => a.id == arrowId)
         .firstOrNull;
     if (arrow == null) return;
 
-    final (newState, result, hitArrow) =
-        _engine!.tapArrow(_gameState!, arrowId);
+    final (newState, result, _) = _engine!.tapArrow(_gameState!, arrowId);
+    _gameState = newState;
 
     if (result == TapResult.success) {
-      // Start fly-out animation
-      _flyingArrow = arrow;
-      _isAnimating = true;
-      _gameState = newState;
+      // Add to flying list (animation is visual-only, doesn't block input)
+      _flyingArrows.add(arrow);
       notifyListeners();
 
-      // Duration matches the snake animation controller
-      final bodyLen = arrow.occupiedCells.length;
-      final animMs = (150 + bodyLen * 50 + 12 * 30).clamp(200, 800) + 50;
+      // Clean up after animation finishes
+      final animMs = _animDuration(arrow);
       Future.delayed(Duration(milliseconds: animMs), () {
-        _flyingArrow = null;
-        _isAnimating = false;
+        _flyingArrows.remove(arrow);
         if (newState.isComplete) {
           _onLevelComplete();
         }
         notifyListeners();
       });
     } else {
-      // Collision - flash the colliding arrows
-      _flyingArrow = arrow;
-      _isAnimating = true;
-      _gameState = newState;
+      // Collision flash
       notifyListeners();
-
-      Future.delayed(const Duration(milliseconds: 600), () {
-        _flyingArrow = null;
-        _isAnimating = false;
+      Future.delayed(const Duration(milliseconds: 500), () {
         _gameState = _gameState?.copyWith(clearCollision: true);
         notifyListeners();
       });
     }
   }
 
+  /// Animation duration for an arrow (ms).
+  int _animDuration(Arrow arrow) {
+    final bodyLen = arrow.occupiedCells.length;
+    final exitCells = (_gridRows > _gridCols ? _gridRows : _gridCols) + 2;
+    return (120 + bodyLen * 40 + exitCells * 25).clamp(200, 700);
+  }
+
   void _onLevelComplete() {
     if (_gameState == null) return;
     final level = _currentLevelNumber;
     final stars = _gameState!.lives;
-
     if (stars > (_levelStars[level] ?? 0)) {
       _levelStars[level] = stars;
     }
@@ -145,16 +131,13 @@ class GameProvider extends ChangeNotifier {
     _saveProgress();
   }
 
-  /// Reset current level.
   void resetLevel() {
     if (_engine == null) return;
     _gameState = _engine!.createInitialState(_originalArrows);
-    _flyingArrow = null;
-    _isAnimating = false;
+    _flyingArrows.clear();
     notifyListeners();
   }
 
-  /// Regenerate with a new layout.
   void regenerateLevel() {
     startLevel(_currentLevelNumber);
   }

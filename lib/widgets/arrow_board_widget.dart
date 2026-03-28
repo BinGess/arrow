@@ -2,10 +2,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/arrow.dart';
-import '../models/game_state.dart';
 import '../providers/game_provider.dart';
 
-/// Renders the entire arrow puzzle board with arrows, tails, and animations.
+/// Renders the puzzle board with arrows, tails, and snake fly-out animations.
 class ArrowBoardWidget extends StatelessWidget {
   const ArrowBoardWidget({super.key});
 
@@ -41,7 +40,7 @@ class ArrowBoardWidget extends StatelessWidget {
                       size: Size(gridW, gridH),
                       painter: _GridPainter(rows: rows, cols: cols),
                     ),
-                    // All arrows with tails (rendered as one custom paint layer)
+                    // Static arrows layer
                     CustomPaint(
                       size: Size(gridW, gridH),
                       painter: _ArrowsPainter(
@@ -51,24 +50,35 @@ class ArrowBoardWidget extends StatelessWidget {
                         hitId: state.hitArrowId,
                       ),
                     ),
-                    // Tap targets for each arrow (invisible, just for hit detection)
-                    ...state.remainingArrows.map((arrow) {
-                      return _ArrowTapTarget(
+                    // Single GestureDetector for the entire board
+                    // — no per-cell hit-test issues, always responsive
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTapUp: (details) {
+                          final col = (details.localPosition.dx / cellSize).floor();
+                          final row = (details.localPosition.dy / cellSize).floor();
+                          if (row < 0 || row >= rows || col < 0 || col >= cols) return;
+
+                          // Find arrow occupying this cell (head or tail)
+                          final arrow = state.arrowOccupyingCell(row, col);
+                          if (arrow != null) {
+                            provider.tapArrow(arrow.id);
+                          }
+                        },
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
+                    // Flying arrow animations (multiple can play at once)
+                    ...provider.flyingArrows.map((arrow) {
+                      return _SnakeFlyWidget(
+                        key: ValueKey('fly_${arrow.id}'),
                         arrow: arrow,
-                        cellSize: cellSize,
-                        enabled: !provider.isAnimating,
-                        onTap: () => provider.tapArrow(arrow.id),
-                      );
-                    }),
-                    // Flying arrow animation
-                    if (provider.flyingArrow != null &&
-                        state.lastCollisionId == null)
-                      _FlyingArrowWidget(
-                        arrow: provider.flyingArrow!,
                         cellSize: cellSize,
                         gridRows: rows,
                         gridCols: cols,
-                      ),
+                      );
+                    }),
                   ],
                 ),
               ),
@@ -80,11 +90,10 @@ class ArrowBoardWidget extends StatelessWidget {
   }
 }
 
-/// Subtle grid lines.
-class _GridPainter extends CustomPainter {
-  final int rows;
-  final int cols;
+// ─── Grid Background ───────────────────────────────────────────────
 
+class _GridPainter extends CustomPainter {
+  final int rows, cols;
   _GridPainter({required this.rows, required this.cols});
 
   @override
@@ -92,17 +101,12 @@ class _GridPainter extends CustomPainter {
     final paint = Paint()
       ..color = const Color(0xFFF0F0F0)
       ..strokeWidth = 0.5;
-
-    final cellW = size.width / cols;
-    final cellH = size.height / rows;
-
+    final cw = size.width / cols, ch = size.height / rows;
     for (var i = 0; i <= cols; i++) {
-      canvas.drawLine(
-          Offset(i * cellW, 0), Offset(i * cellW, size.height), paint);
+      canvas.drawLine(Offset(i * cw, 0), Offset(i * cw, size.height), paint);
     }
     for (var i = 0; i <= rows; i++) {
-      canvas.drawLine(
-          Offset(0, i * cellH), Offset(size.width, i * cellH), paint);
+      canvas.drawLine(Offset(0, i * ch), Offset(size.width, i * ch), paint);
     }
   }
 
@@ -110,12 +114,12 @@ class _GridPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-/// Paints all arrows and their tails in a single paint call for performance.
+// ─── Static Arrows Painter ─────────────────────────────────────────
+
 class _ArrowsPainter extends CustomPainter {
   final List<Arrow> arrows;
   final double cellSize;
-  final int? collisionId;
-  final int? hitId;
+  final int? collisionId, hitId;
 
   _ArrowsPainter({
     required this.arrows,
@@ -127,160 +131,93 @@ class _ArrowsPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     for (final arrow in arrows) {
-      final isCollision = arrow.id == collisionId;
-      final isHit = arrow.id == hitId;
-      final color = (isCollision || isHit)
+      final highlight = arrow.id == collisionId || arrow.id == hitId;
+      final color = highlight
           ? const Color(0xFFFF6B8A)
           : const Color(0xFF2D2D3A);
-
-      // Draw tail first (behind the arrowhead)
-      if (arrow.hasTail) {
-        _drawTail(canvas, arrow, color);
-      }
-
-      // Draw arrowhead
+      if (arrow.hasTail) _drawTail(canvas, arrow, color);
       _drawArrowHead(canvas, arrow, color);
     }
   }
 
   void _drawTail(Canvas canvas, Arrow arrow, Color color) {
-    final strokeWidth = (cellSize * 0.08).clamp(2.0, 5.0);
+    final sw = (cellSize * 0.08).clamp(2.0, 5.0);
     final paint = Paint()
-      ..color = color
-      ..strokeWidth = strokeWidth
+      ..color = color..strokeWidth = sw
       ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+      ..strokeCap = StrokeCap.round..strokeJoin = StrokeJoin.round;
 
-    // Build the tail path: head center → through each tail cell center
-    final headCenter = _cellCenter(arrow.row, arrow.col);
-    final path = Path()..moveTo(headCenter.dx, headCenter.dy);
-
-    var r = arrow.row;
-    var c = arrow.col;
+    final path = Path()..moveTo(
+      arrow.col * cellSize + cellSize / 2,
+      arrow.row * cellSize + cellSize / 2,
+    );
+    var r = arrow.row, c = arrow.col;
     for (final seg in arrow.tailSegments) {
       for (var i = 0; i < seg.length; i++) {
         r += seg.direction.dr;
         c += seg.direction.dc;
-        final center = _cellCenter(r, c);
-        path.lineTo(center.dx, center.dy);
+        path.lineTo(c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
       }
     }
-
     canvas.drawPath(path, paint);
 
-    // Draw a small end cap at the tail tip
-    final tipCenter = _cellCenter(r, c);
-    final capPaint = Paint()
-      ..color = color
-      ..style = PaintingStyle.fill;
-    canvas.drawCircle(tipCenter, strokeWidth * 0.8, capPaint);
+    // End cap
+    canvas.drawCircle(
+      Offset(c * cellSize + cellSize / 2, r * cellSize + cellSize / 2),
+      sw * 0.8,
+      Paint()..color = color..style = PaintingStyle.fill,
+    );
   }
 
   void _drawArrowHead(Canvas canvas, Arrow arrow, Color color) {
-    final center = _cellCenter(arrow.row, arrow.col);
-    final arrowSize = cellSize * 0.32;
-    final headLen = arrowSize * 0.45;
-    final strokeWidth = (cellSize * 0.08).clamp(2.0, 4.5);
+    final cx = arrow.col * cellSize + cellSize / 2;
+    final cy = arrow.row * cellSize + cellSize / 2;
+    final len = cellSize * 0.32;
+    final hl = len * 0.45;
+    final sw = (cellSize * 0.08).clamp(2.0, 4.5);
 
     final paint = Paint()
-      ..color = color
-      ..strokeWidth = strokeWidth
+      ..color = color..strokeWidth = sw
       ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+      ..strokeCap = StrokeCap.round..strokeJoin = StrokeJoin.round;
 
-    double angle;
-    switch (arrow.direction) {
-      case Direction.up:    angle = -math.pi / 2; break;
-      case Direction.down:  angle = math.pi / 2; break;
-      case Direction.left:  angle = math.pi; break;
-      case Direction.right: angle = 0; break;
-    }
-
-    // Shaft from center backward to center forward
-    final tail = Offset(
-      center.dx - arrowSize * math.cos(angle),
-      center.dy - arrowSize * math.sin(angle),
-    );
-    final tip = Offset(
-      center.dx + arrowSize * math.cos(angle),
-      center.dy + arrowSize * math.sin(angle),
-    );
+    final angle = _dirAngle(arrow.direction);
+    final tail = Offset(cx - len * math.cos(angle), cy - len * math.sin(angle));
+    final tip = Offset(cx + len * math.cos(angle), cy + len * math.sin(angle));
     canvas.drawLine(tail, tip, paint);
 
-    // Arrowhead chevron
-    final h1 = Offset(
-      tip.dx + headLen * math.cos(angle + math.pi * 0.8),
-      tip.dy + headLen * math.sin(angle + math.pi * 0.8),
-    );
-    final h2 = Offset(
-      tip.dx + headLen * math.cos(angle - math.pi * 0.8),
-      tip.dy + headLen * math.sin(angle - math.pi * 0.8),
-    );
-    canvas.drawLine(tip, h1, paint);
-    canvas.drawLine(tip, h2, paint);
-  }
-
-  Offset _cellCenter(int row, int col) {
-    return Offset(
-      col * cellSize + cellSize / 2,
-      row * cellSize + cellSize / 2,
-    );
+    canvas.drawLine(tip, Offset(
+      tip.dx + hl * math.cos(angle + math.pi * 0.8),
+      tip.dy + hl * math.sin(angle + math.pi * 0.8),
+    ), paint);
+    canvas.drawLine(tip, Offset(
+      tip.dx + hl * math.cos(angle - math.pi * 0.8),
+      tip.dy + hl * math.sin(angle - math.pi * 0.8),
+    ), paint);
   }
 
   @override
   bool shouldRepaint(covariant _ArrowsPainter oldDelegate) => true;
 }
 
-/// Invisible tap targets covering all of the arrow's cells (head + tail).
-class _ArrowTapTarget extends StatelessWidget {
-  final Arrow arrow;
-  final double cellSize;
-  final bool enabled;
-  final VoidCallback onTap;
+// ─── Snake Fly-Out Animation ───────────────────────────────────────
 
-  const _ArrowTapTarget({
-    required this.arrow,
-    required this.cellSize,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // Create a tap target for each occupied cell
-    final cells = arrow.occupiedCells;
-    return Stack(
-      children: cells.map((cell) {
-        return Positioned(
-          left: cell.$2 * cellSize,
-          top: cell.$1 * cellSize,
-          width: cellSize,
-          height: cellSize,
-          child: GestureDetector(
-            onTap: enabled ? onTap : null,
-            behavior: HitTestBehavior.opaque,
-            child: const SizedBox.expand(),
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
-
-/// Snake-like flying arrow animation.
+/// Animates an arrow flying off the board with proper snake/caterpillar motion.
 ///
-/// The head leads, moving in its flight direction cell-by-cell.
-/// Each body/tail segment follows the segment ahead of it,
-/// creating a "peeling" snake effect for L-shaped arrows.
-class _FlyingArrowWidget extends StatefulWidget {
+/// How it works:
+/// 1. Build a "track" — a polyline of waypoints along grid axes:
+///    [tail_tip, ..., tail_cells, head, head+dir, head+2*dir, ...]
+/// 2. Each body segment sits on this track at a fixed spacing.
+/// 3. As animation progresses, all segments advance along the track together.
+/// 4. Because the track follows grid axes (with corners), the body naturally
+///    "unpeels" around corners — exactly like a snake/caterpillar.
+class _SnakeFlyWidget extends StatefulWidget {
   final Arrow arrow;
   final double cellSize;
-  final int gridRows;
-  final int gridCols;
+  final int gridRows, gridCols;
 
-  const _FlyingArrowWidget({
+  const _SnakeFlyWidget({
+    super.key,
     required this.arrow,
     required this.cellSize,
     required this.gridRows,
@@ -288,57 +225,66 @@ class _FlyingArrowWidget extends StatefulWidget {
   });
 
   @override
-  State<_FlyingArrowWidget> createState() => _FlyingArrowWidgetState();
+  State<_SnakeFlyWidget> createState() => _SnakeFlyWidgetState();
 }
 
-class _FlyingArrowWidgetState extends State<_FlyingArrowWidget>
+class _SnakeFlyWidgetState extends State<_SnakeFlyWidget>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
 
-  /// The original positions of the arrow body: [head, tail1, tail2, ...].
-  late List<Offset> _originalPositions;
+  /// The track: a list of waypoints the snake body slides along.
+  /// Goes from tail tip → through body → head → off screen.
+  late List<Offset> _track;
 
-  /// The full path the head will travel (original head pos → off screen).
-  late List<Offset> _headPath;
+  /// Number of body segments (head + tail cells).
+  late int _bodyLen;
 
-  /// Total animation steps needed (head travels enough to pull entire body off screen).
-  late int _totalSteps;
+  /// Cumulative distances along the track at each waypoint.
+  late List<double> _trackDistances;
+  late double _totalTrackLength;
 
   @override
   void initState() {
     super.initState();
+    _bodyLen = widget.arrow.occupiedCells.length;
 
-    // Build the body positions: head first, then tail cells in order.
-    _originalPositions = [
-      _cellCenter(widget.arrow.row, widget.arrow.col),
-      ...widget.arrow.tailCells.map((c) => _cellCenter(c.$1, c.$2)),
-    ];
+    // Build the track waypoints.
+    // Body positions: [head, tail1, tail2, ..., tail_tip]
+    // We reverse to get: [tail_tip, ..., tail1, head]
+    // Then extend with the flight path off-screen.
+    final bodyPositions = widget.arrow.occupiedCells
+        .map((c) => _cellCenter(c.$1, c.$2))
+        .toList();
+    final bodyReversed = bodyPositions.reversed.toList();
 
-    // Build the head's full travel path.
-    // Head starts at its original position and moves in the flight direction
-    // until the entire body (including tail) has exited the screen.
-    final bodyLen = _originalPositions.length;
-    final exitSteps = math.max(widget.gridRows, widget.gridCols) + 2;
-    _totalSteps = bodyLen + exitSteps;
-
-    _headPath = [];
-    var hx = _originalPositions[0].dx;
-    var hy = _originalPositions[0].dy;
-    _headPath.add(Offset(hx, hy));
-    for (var i = 0; i < _totalSteps; i++) {
-      hx += widget.arrow.direction.dc * widget.cellSize;
-      hy += widget.arrow.direction.dr * widget.cellSize;
-      _headPath.add(Offset(hx, hy));
+    // Flight path: head continues in its direction off screen
+    final exitCells = math.max(widget.gridRows, widget.gridCols) + 3;
+    final headCenter = bodyPositions[0];
+    final flightPath = <Offset>[];
+    for (var i = 1; i <= exitCells; i++) {
+      flightPath.add(Offset(
+        headCenter.dx + widget.arrow.direction.dc * widget.cellSize * i,
+        headCenter.dy + widget.arrow.direction.dr * widget.cellSize * i,
+      ));
     }
 
-    // Animation duration scales with body length for consistent speed feel
-    final durationMs = 150 + bodyLen * 50 + exitSteps * 30;
+    _track = [...bodyReversed, ...flightPath];
 
+    // Pre-compute cumulative distances along the track
+    _trackDistances = [0.0];
+    for (var i = 1; i < _track.length; i++) {
+      final dx = _track[i].dx - _track[i - 1].dx;
+      final dy = _track[i].dy - _track[i - 1].dy;
+      _trackDistances.add(_trackDistances.last + math.sqrt(dx * dx + dy * dy));
+    }
+    _totalTrackLength = _trackDistances.last;
+
+    // Duration
+    final durationMs = (120 + _bodyLen * 40 + exitCells * 25).clamp(200, 700);
     _controller = AnimationController(
-      duration: Duration(milliseconds: durationMs.clamp(200, 800)),
+      duration: Duration(milliseconds: durationMs),
       vsync: this,
-    );
-    _controller.forward();
+    )..forward();
   }
 
   @override
@@ -347,40 +293,30 @@ class _FlyingArrowWidgetState extends State<_FlyingArrowWidget>
     super.dispose();
   }
 
-  /// Get the position of body segment [segIndex] at animation progress [t].
-  ///
-  /// Snake logic: at step S, segment 0 (head) is at _headPath[S].
-  /// Segment 1 follows segment 0: at step S, it's where segment 0 was at step S-1.
-  /// Segment N is where segment N-1 was at step S-1... which is where
-  /// segment 0 was at step S-N.
-  ///
-  /// Before a segment starts moving (S < segIndex), it stays at its original pos.
-  Offset _segmentPosition(int segIndex, double progress) {
-    // Current continuous step
-    final step = progress * _totalSteps;
+  /// Get position along the track at a given distance from the start.
+  Offset _positionAtDistance(double dist) {
+    if (dist <= 0) return _track.first;
+    if (dist >= _totalTrackLength) return _track.last;
 
-    // This segment starts moving after [segIndex] steps
-    final segStep = step - segIndex;
-
-    if (segStep <= 0) {
-      // Hasn't started moving yet → stay at original position
-      return _originalPositions[segIndex];
+    // Binary search for the segment
+    var lo = 0, hi = _trackDistances.length - 1;
+    while (lo < hi - 1) {
+      final mid = (lo + hi) ~/ 2;
+      if (_trackDistances[mid] <= dist) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
     }
 
-    // Interpolate along the head's path, offset by segIndex
-    final pathIndex = segStep.floor();
-    final frac = segStep - pathIndex;
+    final segStart = _trackDistances[lo];
+    final segEnd = _trackDistances[hi];
+    final segLen = segEnd - segStart;
+    final t = segLen > 0 ? (dist - segStart) / segLen : 0.0;
 
-    if (pathIndex >= _headPath.length - 1) {
-      return _headPath.last;
-    }
-
-    // Smooth interpolation between path points
-    final from = _headPath[pathIndex];
-    final to = _headPath[pathIndex + 1];
     return Offset(
-      from.dx + (to.dx - from.dx) * frac,
-      from.dy + (to.dy - from.dy) * frac,
+      _track[lo].dx + (_track[hi].dx - _track[lo].dx) * t,
+      _track[lo].dy + (_track[hi].dy - _track[lo].dy) * t,
     );
   }
 
@@ -388,43 +324,54 @@ class _FlyingArrowWidgetState extends State<_FlyingArrowWidget>
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _controller,
-      builder: (context, child) {
+      builder: (context, _) {
+        // How far has the snake advanced along the track?
+        // At t=0: segments are at their original positions
+        // At t=1: the tail tip has traveled enough to fully exit
+        final advance = _controller.value * (_totalTrackLength);
+
+        // Each segment's initial distance along the track:
+        // tail_tip = 0, ..., head = _trackDistances[_bodyLen - 1]
+        final positions = List.generate(_bodyLen, (i) {
+          // Segment 0 = tail_tip (front of track), segment _bodyLen-1 = head
+          // We want head first in the list for drawing
+          final segIdx = _bodyLen - 1 - i;
+          final initialDist = _trackDistances[segIdx];
+          return _positionAtDistance(initialDist + advance);
+        });
+
+        final opacity = (1.0 - _controller.value * 0.6).clamp(0.0, 1.0);
+
         return CustomPaint(
           size: Size(
             widget.gridCols * widget.cellSize,
             widget.gridRows * widget.cellSize,
           ),
-          painter: _SnakeArrowPainter(
-            bodyPositions: List.generate(
-              _originalPositions.length,
-              (i) => _segmentPosition(i, _controller.value),
-            ),
+          painter: _SnakePainter(
+            bodyPositions: positions,
             direction: widget.arrow.direction,
             cellSize: widget.cellSize,
-            opacity: (1.0 - _controller.value * 0.7).clamp(0.0, 1.0),
+            opacity: opacity,
           ),
         );
       },
     );
   }
 
-  Offset _cellCenter(int row, int col) {
-    return Offset(
-      col * widget.cellSize + widget.cellSize / 2,
-      row * widget.cellSize + widget.cellSize / 2,
-    );
-  }
+  Offset _cellCenter(int row, int col) => Offset(
+    col * widget.cellSize + widget.cellSize / 2,
+    row * widget.cellSize + widget.cellSize / 2,
+  );
 }
 
-/// Paints the snake-animated flying arrow.
-class _SnakeArrowPainter extends CustomPainter {
-  /// Current positions of each body segment: [head, tail1, tail2, ...].
-  final List<Offset> bodyPositions;
+/// Paints the flying snake body + arrowhead.
+class _SnakePainter extends CustomPainter {
+  final List<Offset> bodyPositions; // [head, tail1, tail2, ...]
   final Direction direction;
   final double cellSize;
   final double opacity;
 
-  _SnakeArrowPainter({
+  _SnakePainter({
     required this.bodyPositions,
     required this.direction,
     required this.cellSize,
@@ -434,77 +381,61 @@ class _SnakeArrowPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (bodyPositions.isEmpty) return;
-
     final color = const Color(0xFF6C63FF).withOpacity(opacity);
-    final strokeWidth = (cellSize * 0.08).clamp(2.0, 4.5);
+    final sw = (cellSize * 0.08).clamp(2.0, 4.5);
 
-    // Draw the body line connecting all segments
+    // Body line
     if (bodyPositions.length > 1) {
       final linePaint = Paint()
-        ..color = color
-        ..strokeWidth = strokeWidth
+        ..color = color..strokeWidth = sw
         ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round;
+        ..strokeCap = StrokeCap.round..strokeJoin = StrokeJoin.round;
 
-      final path = Path()
-        ..moveTo(bodyPositions[0].dx, bodyPositions[0].dy);
+      final path = Path()..moveTo(bodyPositions[0].dx, bodyPositions[0].dy);
       for (var i = 1; i < bodyPositions.length; i++) {
         path.lineTo(bodyPositions[i].dx, bodyPositions[i].dy);
       }
       canvas.drawPath(path, linePaint);
 
-      // End cap at the tail tip
-      final capPaint = Paint()
-        ..color = color
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(bodyPositions.last, strokeWidth * 0.8, capPaint);
+      // Tail end cap
+      canvas.drawCircle(bodyPositions.last, sw * 0.8,
+        Paint()..color = color..style = PaintingStyle.fill);
     }
 
-    // Draw arrowhead at position [0]
+    // Arrowhead at position[0]
     final head = bodyPositions[0];
-    final arrowSize = cellSize * 0.32;
-    final headLen = arrowSize * 0.45;
-
+    final len = cellSize * 0.32;
+    final hl = len * 0.45;
     final paint = Paint()
-      ..color = color
-      ..strokeWidth = strokeWidth
+      ..color = color..strokeWidth = sw
       ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+      ..strokeCap = StrokeCap.round..strokeJoin = StrokeJoin.round;
 
-    double angle;
-    switch (direction) {
-      case Direction.up:    angle = -math.pi / 2; break;
-      case Direction.down:  angle = math.pi / 2; break;
-      case Direction.left:  angle = math.pi; break;
-      case Direction.right: angle = 0; break;
-    }
-
-    // Shaft
-    final shaftTail = Offset(
-      head.dx - arrowSize * math.cos(angle),
-      head.dy - arrowSize * math.sin(angle),
-    );
-    final tip = Offset(
-      head.dx + arrowSize * math.cos(angle),
-      head.dy + arrowSize * math.sin(angle),
-    );
-    canvas.drawLine(shaftTail, tip, paint);
-
-    // Chevron
-    final h1 = Offset(
-      tip.dx + headLen * math.cos(angle + math.pi * 0.8),
-      tip.dy + headLen * math.sin(angle + math.pi * 0.8),
-    );
-    final h2 = Offset(
-      tip.dx + headLen * math.cos(angle - math.pi * 0.8),
-      tip.dy + headLen * math.sin(angle - math.pi * 0.8),
-    );
-    canvas.drawLine(tip, h1, paint);
-    canvas.drawLine(tip, h2, paint);
+    final angle = _dirAngle(direction);
+    final tail = Offset(head.dx - len * math.cos(angle), head.dy - len * math.sin(angle));
+    final tip = Offset(head.dx + len * math.cos(angle), head.dy + len * math.sin(angle));
+    canvas.drawLine(tail, tip, paint);
+    canvas.drawLine(tip, Offset(
+      tip.dx + hl * math.cos(angle + math.pi * 0.8),
+      tip.dy + hl * math.sin(angle + math.pi * 0.8),
+    ), paint);
+    canvas.drawLine(tip, Offset(
+      tip.dx + hl * math.cos(angle - math.pi * 0.8),
+      tip.dy + hl * math.sin(angle - math.pi * 0.8),
+    ), paint);
   }
 
   @override
-  bool shouldRepaint(covariant _SnakeArrowPainter oldDelegate) => true;
+  bool shouldRepaint(covariant _SnakePainter oldDelegate) => true;
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────
+
+double _dirAngle(Direction d) {
+  switch (d) {
+    case Direction.up:    return -math.pi / 2;
+    case Direction.down:  return math.pi / 2;
+    case Direction.left:  return math.pi;
+    case Direction.right: return 0;
+  }
 }

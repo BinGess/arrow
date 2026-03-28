@@ -25,42 +25,44 @@ class LevelGenerator {
     int count,
     int maxTail,
     bool lTails,
+    double lTailChance, // probability of L-shaped tail when eligible
     int minDepth,
   }) configForLevel(int level) {
+    // More arrows, more tails, more L-shapes at every tier
     if (level <= 2) {
-      return (rows: 5, cols: 4, count: 5, maxTail: 0, lTails: false, minDepth: 1);
+      return (rows: 6, cols: 5, count: 8, maxTail: 1, lTails: false, lTailChance: 0.0, minDepth: 2);
     }
     if (level <= 4) {
-      return (rows: 6, cols: 5, count: 8, maxTail: 1, lTails: false, minDepth: 2);
+      return (rows: 7, cols: 6, count: 14, maxTail: 2, lTails: true, lTailChance: 0.3, minDepth: 3);
     }
     if (level <= 6) {
-      return (rows: 7, cols: 5, count: 11, maxTail: 2, lTails: false, minDepth: 3);
+      return (rows: 8, cols: 6, count: 18, maxTail: 3, lTails: true, lTailChance: 0.4, minDepth: 4);
     }
     if (level <= 8) {
-      return (rows: 7, cols: 6, count: 14, maxTail: 2, lTails: false, minDepth: 3);
+      return (rows: 9, cols: 7, count: 24, maxTail: 3, lTails: true, lTailChance: 0.45, minDepth: 5);
     }
     if (level <= 10) {
-      return (rows: 8, cols: 7, count: 18, maxTail: 3, lTails: true, minDepth: 4);
+      return (rows: 10, cols: 8, count: 30, maxTail: 4, lTails: true, lTailChance: 0.5, minDepth: 6);
     }
     if (level <= 13) {
-      return (rows: 9, cols: 7, count: 22, maxTail: 3, lTails: true, minDepth: 5);
+      return (rows: 11, cols: 8, count: 36, maxTail: 4, lTails: true, lTailChance: 0.55, minDepth: 7);
     }
     if (level <= 16) {
-      return (rows: 10, cols: 8, count: 28, maxTail: 4, lTails: true, minDepth: 6);
+      return (rows: 12, cols: 9, count: 44, maxTail: 5, lTails: true, lTailChance: 0.55, minDepth: 8);
     }
     if (level <= 20) {
-      return (rows: 11, cols: 9, count: 35, maxTail: 5, lTails: true, minDepth: 7);
+      return (rows: 13, cols: 10, count: 52, maxTail: 5, lTails: true, lTailChance: 0.6, minDepth: 9);
     }
     if (level <= 25) {
-      return (rows: 12, cols: 9, count: 40, maxTail: 5, lTails: true, minDepth: 8);
+      return (rows: 14, cols: 10, count: 60, maxTail: 6, lTails: true, lTailChance: 0.6, minDepth: 10);
     }
     if (level <= 30) {
-      return (rows: 13, cols: 10, count: 48, maxTail: 6, lTails: true, minDepth: 9);
+      return (rows: 14, cols: 11, count: 68, maxTail: 6, lTails: true, lTailChance: 0.65, minDepth: 11);
     }
     if (level <= 40) {
-      return (rows: 14, cols: 11, count: 56, maxTail: 6, lTails: true, minDepth: 10);
+      return (rows: 15, cols: 12, count: 78, maxTail: 7, lTails: true, lTailChance: 0.65, minDepth: 12);
     }
-    return (rows: 15, cols: 12, count: 65, maxTail: 7, lTails: true, minDepth: 11);
+    return (rows: 16, cols: 13, count: 90, maxTail: 8, lTails: true, lTailChance: 0.7, minDepth: 13);
   }
 
   /// Generate a validated, solvable level.
@@ -70,7 +72,7 @@ class LevelGenerator {
     for (var attempt = 0; attempt < 10; attempt++) {
       final result = _generateLevel(
         config.rows, config.cols, config.count,
-        config.maxTail, config.lTails, config.minDepth,
+        config.maxTail, config.lTails, config.lTailChance, config.minDepth,
       );
 
       // Validate solvability
@@ -96,22 +98,26 @@ class LevelGenerator {
 
   ({List<Arrow> arrows, int rows, int cols}) _generateLevel(
     int rows, int cols, int targetCount,
-    int maxTail, bool allowLTails, int minDepth,
+    int maxTail, bool allowLTails, double lTailChance, int minDepth,
   ) {
     final placed = <Arrow>[]; // Placement order (reverse of solution)
     final occupied = <(int, int)>{};
     var nextId = 0;
 
     for (var i = 0; i < targetCount; i++) {
-      // Decide tail length for this arrow.
       // Earlier placements (removed last) get longer tails to block more.
-      // Later placements (removed first) get shorter tails.
-      final progress = i / targetCount; // 0.0 → 1.0
+      final progress = i / targetCount;
+      // Guarantee a minimum tail length for most arrows
       final tailBudget = maxTail > 0
-          ? max(0, (maxTail * (1.0 - progress * 0.6)).round())
+          ? max(1, (maxTail * (1.0 - progress * 0.5)).round())
           : 0;
-      final tailLen = tailBudget > 0 ? _random.nextInt(tailBudget + 1) : 0;
-      final useLTail = allowLTails && tailLen >= 2 && _random.nextDouble() < 0.4;
+      // Higher minimum tail: at least 1 for early arrows, scaling down
+      final minTail = maxTail > 0 ? max(0, (tailBudget * 0.5).round()) : 0;
+      final tailLen = tailBudget > 0
+          ? minTail + _random.nextInt(tailBudget - minTail + 1)
+          : 0;
+      final useLTail = allowLTails && tailLen >= 2 &&
+          _random.nextDouble() < lTailChance;
 
       final arrow = _placeBestArrow(
         rows, cols, occupied, placed, nextId, tailLen, useLTail,
