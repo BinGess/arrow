@@ -1,10 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../engine/puzzle_generator.dart';
-import '../engine/puzzle_solver.dart';
+import '../engine/game_engine.dart';
+import '../engine/level_generator.dart';
+import '../models/arrow.dart';
 import '../models/game_state.dart';
-import '../models/puzzle_level.dart';
-import '../models/puzzle_tile.dart';
 
 /// Manages game state, level progression, and persistence.
 class GameProvider extends ChangeNotifier {
@@ -12,18 +11,35 @@ class GameProvider extends ChangeNotifier {
   static const String _unlockedKey = 'unlocked_level';
   static const String _starsKey = 'level_stars_';
 
-  final PuzzleGenerator _generator = PuzzleGenerator();
+  final LevelGenerator _generator = LevelGenerator();
 
   int _unlockedLevel = 1;
   int get unlockedLevel => _unlockedLevel;
 
-  PuzzleLevel? _currentLevel;
-  PuzzleLevel? get currentLevel => _currentLevel;
+  int _currentLevelNumber = 0;
+  int get currentLevelNumber => _currentLevelNumber;
 
+  int _gridRows = 0;
+  int get gridRows => _gridRows;
+  int _gridCols = 0;
+  int get gridCols => _gridCols;
+
+  GameEngine? _engine;
   GameState? _gameState;
   GameState? get gameState => _gameState;
 
+  /// The original arrows for the current level (for reset).
+  List<Arrow> _originalArrows = [];
+
   final Map<int, int> _levelStars = {};
+
+  /// Arrow currently flying (for animation).
+  Arrow? _flyingArrow;
+  Arrow? get flyingArrow => _flyingArrow;
+
+  /// Whether a fly animation is in progress.
+  bool _isAnimating = false;
+  bool get isAnimating => _isAnimating;
 
   GameProvider() {
     _loadProgress();
@@ -37,9 +53,7 @@ class GameProvider extends ChangeNotifier {
         _levelStars[i] = prefs.getInt('$_starsKey$i') ?? 0;
       }
       notifyListeners();
-    } catch (_) {
-      // SharedPreferences not available, use defaults
-    }
+    } catch (_) {}
   }
 
   Future<void> _saveProgress() async {
@@ -49,150 +63,97 @@ class GameProvider extends ChangeNotifier {
       for (final entry in _levelStars.entries) {
         await prefs.setInt('$_starsKey${entry.key}', entry.value);
       }
-    } catch (_) {
-      // Ignore save errors
-    }
+    } catch (_) {}
   }
 
   int starsForLevel(int level) => _levelStars[level] ?? 0;
 
   /// Start a specific level.
   void startLevel(int levelNumber) {
-    _currentLevel = _generator.generate(levelNumber);
-    final connected = PuzzleSolver.findConnectedTiles(_currentLevel!);
-    _gameState = GameState(
-      lives: 5,
-      connectedTiles: connected,
-    );
+    _currentLevelNumber = levelNumber;
+    final result = _generator.generate(levelNumber);
+    _gridRows = result.rows;
+    _gridCols = result.cols;
+    _originalArrows = List.of(result.arrows);
+    _engine = GameEngine(rows: _gridRows, cols: _gridCols);
+    _gameState = _engine!.createInitialState(result.arrows);
+    _flyingArrow = null;
+    _isAnimating = false;
     notifyListeners();
   }
 
-  /// Rotate a tile at the given position.
-  void rotateTile(int row, int col) {
-    if (_currentLevel == null || _gameState == null) return;
+  /// Tap an arrow to try to fly it out.
+  void tapArrow(int arrowId) {
+    if (_engine == null || _gameState == null) return;
+    if (_isAnimating) return;
     if (_gameState!.isComplete || _gameState!.isGameOver) return;
 
-    final tile = _currentLevel!.tileAt(row, col);
-    if (tile.isFixed) return;
+    // Find the arrow being tapped
+    final arrow = _gameState!.remainingArrows
+        .where((a) => a.id == arrowId)
+        .firstOrNull;
+    if (arrow == null) return;
 
-    // Rotate the tile
-    final rotatedTile = tile.rotated();
+    final (newState, result, hitArrow) =
+        _engine!.tapArrow(_gameState!, arrowId);
 
-    // Update the grid
-    final newGrid = List.generate(_currentLevel!.rows, (r) {
-      return List.generate(_currentLevel!.cols, (c) {
-        if (r == row && c == col) return rotatedTile;
-        return _currentLevel!.grid[r][c];
+    if (result == TapResult.success) {
+      // Start fly-out animation
+      _flyingArrow = arrow;
+      _isAnimating = true;
+      _gameState = newState;
+      notifyListeners();
+
+      // After animation completes
+      Future.delayed(const Duration(milliseconds: 400), () {
+        _flyingArrow = null;
+        _isAnimating = false;
+        if (newState.isComplete) {
+          _onLevelComplete();
+        }
+        notifyListeners();
       });
-    });
+    } else {
+      // Collision - flash the colliding arrows
+      _flyingArrow = arrow;
+      _isAnimating = true;
+      _gameState = newState;
+      notifyListeners();
 
-    _currentLevel = PuzzleLevel(
-      levelNumber: _currentLevel!.levelNumber,
-      rows: _currentLevel!.rows,
-      cols: _currentLevel!.cols,
-      grid: newGrid,
-      solutionRotations: _currentLevel!.solutionRotations,
-    );
-
-    // Recompute connectivity
-    final connected = PuzzleSolver.findConnectedTiles(_currentLevel!);
-    final isSolved = PuzzleSolver.isSolved(_currentLevel!);
-    final moveCount = _gameState!.moveCount + 1;
-
-    _gameState = _gameState!.copyWith(
-      moveCount: moveCount,
-      connectedTiles: connected,
-      isComplete: isSolved,
-    );
-
-    if (isSolved) {
-      _onLevelComplete();
+      Future.delayed(const Duration(milliseconds: 600), () {
+        _flyingArrow = null;
+        _isAnimating = false;
+        _gameState = _gameState?.copyWith(clearCollision: true);
+        notifyListeners();
+      });
     }
-
-    notifyListeners();
   }
 
   void _onLevelComplete() {
-    if (_currentLevel == null || _gameState == null) return;
-
-    final level = _currentLevel!.levelNumber;
-
-    // Stars based on remaining lives
+    if (_gameState == null) return;
+    final level = _currentLevelNumber;
     final stars = _gameState!.lives;
+
     if (stars > (_levelStars[level] ?? 0)) {
       _levelStars[level] = stars;
     }
-
-    // Unlock next level
     if (level >= _unlockedLevel && level < totalLevels) {
       _unlockedLevel = level + 1;
     }
-
     _saveProgress();
   }
 
-  /// Reset current level (re-scramble).
+  /// Reset current level.
   void resetLevel() {
-    if (_currentLevel == null) return;
-    startLevel(_currentLevel!.levelNumber);
+    if (_engine == null) return;
+    _gameState = _engine!.createInitialState(_originalArrows);
+    _flyingArrow = null;
+    _isAnimating = false;
+    notifyListeners();
   }
 
-  /// Hint: reveal one tile's correct rotation.
-  void useHint() {
-    if (_currentLevel == null || _gameState == null) return;
-    if (_gameState!.lives <= 0) return;
-    if (_gameState!.isComplete) return;
-
-    // Find a tile that isn't in its solution rotation
-    for (var r = 0; r < _currentLevel!.rows; r++) {
-      for (var c = 0; c < _currentLevel!.cols; c++) {
-        final tile = _currentLevel!.tileAt(r, c);
-        final solutionRot = _currentLevel!.solutionRotations[r][c];
-        if (!tile.isFixed && tile.rotation != solutionRot) {
-          // Set this tile to solution rotation
-          final correctedTile = PuzzleTile(
-            row: r,
-            col: c,
-            type: tile.type,
-            rotation: solutionRot,
-            isFixed: true, // Lock it after hint
-            hasArrow: tile.hasArrow,
-            arrowDirection: tile.arrowDirection,
-            isSource: tile.isSource,
-            isTarget: tile.isTarget,
-          );
-
-          final newGrid = List.generate(_currentLevel!.rows, (gr) {
-            return List.generate(_currentLevel!.cols, (gc) {
-              if (gr == r && gc == c) return correctedTile;
-              return _currentLevel!.grid[gr][gc];
-            });
-          });
-
-          _currentLevel = PuzzleLevel(
-            levelNumber: _currentLevel!.levelNumber,
-            rows: _currentLevel!.rows,
-            cols: _currentLevel!.cols,
-            grid: newGrid,
-            solutionRotations: _currentLevel!.solutionRotations,
-          );
-
-          // Cost: 1 life
-          final connected = PuzzleSolver.findConnectedTiles(_currentLevel!);
-          final isSolved = PuzzleSolver.isSolved(_currentLevel!);
-
-          _gameState = _gameState!.copyWith(
-            lives: _gameState!.lives - 1,
-            connectedTiles: connected,
-            isComplete: isSolved,
-            isGameOver: _gameState!.lives - 1 <= 0 && !isSolved,
-          );
-
-          if (isSolved) _onLevelComplete();
-          notifyListeners();
-          return;
-        }
-      }
-    }
+  /// Regenerate with a new layout.
+  void regenerateLevel() {
+    startLevel(_currentLevelNumber);
   }
 }

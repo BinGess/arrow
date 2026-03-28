@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
 import '../widgets/hearts_display.dart';
-import '../widgets/puzzle_grid_widget.dart';
+import '../widgets/arrow_board_widget.dart';
 
 class GameScreen extends StatelessWidget {
   const GameScreen({super.key});
@@ -14,72 +14,92 @@ class GameScreen extends StatelessWidget {
       body: SafeArea(
         child: Consumer<GameProvider>(
           builder: (context, provider, _) {
-            final level = provider.currentLevel;
             final state = provider.gameState;
-            if (level == null || state == null) {
+            if (state == null) {
               return const Center(child: CircularProgressIndicator());
             }
 
-            return Column(
+            return Stack(
               children: [
-                // Header
-                _GameHeader(
-                  levelNumber: level.levelNumber,
-                  lives: state.lives,
-                  maxLives: state.maxLives,
-                  moveCount: state.moveCount,
-                  onBack: () => Navigator.pop(context),
-                  onReset: () => provider.resetLevel(),
-                ),
-                const Divider(height: 1, color: Color(0xFFE8E5F0)),
-                // Puzzle grid
-                const Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.all(12),
-                    child: PuzzleGridWidget(),
-                  ),
-                ),
-                // Bottom bar with hint button
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Tap tiles to rotate',
-                          style: TextStyle(
-                            color: const Color(0xFF9E9E9E),
-                            fontSize: 14,
-                          ),
+                Column(
+                  children: [
+                    // Header
+                    _GameHeader(
+                      levelNumber: provider.currentLevelNumber,
+                      lives: state.lives,
+                      maxLives: state.maxLives,
+                      remaining: state.remainingArrows.length,
+                      onBack: () => Navigator.pop(context),
+                      onReset: () => provider.resetLevel(),
+                    ),
+                    const Divider(height: 1, color: Color(0xFFE8E5F0)),
+                    // Arrow board
+                    const Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.all(8),
+                        child: ArrowBoardWidget(),
+                      ),
+                    ),
+                    // Bottom info
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+                      child: Text(
+                        'Tap arrows to fly them out. Avoid collisions!',
+                        style: TextStyle(
+                          color: const Color(0xFF9E9E9E),
+                          fontSize: 13,
                         ),
+                        textAlign: TextAlign.center,
                       ),
-                      _HintButton(
-                        lives: state.lives,
-                        enabled: !state.isComplete && !state.isGameOver,
-                        onPressed: () => provider.useHint(),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
                 // Completion overlay
                 if (state.isComplete)
-                  _CompletionBanner(
+                  _OverlayBanner(
+                    title: 'Level Complete!',
+                    titleColor: const Color(0xFF4CAF50),
+                    subtitle:
+                        'Arrows cleared: ${state.removedOrder.length}',
                     lives: state.lives,
-                    moveCount: state.moveCount,
-                    onNext: () {
-                      final nextLevel = level.levelNumber + 1;
-                      if (nextLevel <= GameProvider.totalLevels) {
-                        provider.startLevel(nextLevel);
-                      } else {
-                        Navigator.pop(context);
-                      }
-                    },
-                    onMenu: () => Navigator.pop(context),
+                    actions: [
+                      _BannerAction(
+                        label: 'Menu',
+                        isPrimary: false,
+                        onTap: () => Navigator.pop(context),
+                      ),
+                      _BannerAction(
+                        label: 'Next Level',
+                        isPrimary: true,
+                        onTap: () {
+                          final next = provider.currentLevelNumber + 1;
+                          if (next <= GameProvider.totalLevels) {
+                            provider.startLevel(next);
+                          } else {
+                            Navigator.pop(context);
+                          }
+                        },
+                      ),
+                    ],
                   ),
                 if (state.isGameOver)
-                  _GameOverBanner(
-                    onRetry: () => provider.resetLevel(),
-                    onMenu: () => Navigator.pop(context),
+                  _OverlayBanner(
+                    title: 'Game Over',
+                    titleColor: const Color(0xFFFF6B8A),
+                    subtitle: 'No lives remaining',
+                    lives: 0,
+                    actions: [
+                      _BannerAction(
+                        label: 'Menu',
+                        isPrimary: false,
+                        onTap: () => Navigator.pop(context),
+                      ),
+                      _BannerAction(
+                        label: 'Retry',
+                        isPrimary: true,
+                        onTap: () => provider.resetLevel(),
+                      ),
+                    ],
                   ),
               ],
             );
@@ -94,7 +114,7 @@ class _GameHeader extends StatelessWidget {
   final int levelNumber;
   final int lives;
   final int maxLives;
-  final int moveCount;
+  final int remaining;
   final VoidCallback onBack;
   final VoidCallback onReset;
 
@@ -102,7 +122,7 @@ class _GameHeader extends StatelessWidget {
     required this.levelNumber,
     required this.lives,
     required this.maxLives,
-    required this.moveCount,
+    required this.remaining,
     required this.onBack,
     required this.onReset,
   });
@@ -110,7 +130,7 @@ class _GameHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
       child: Row(
         children: [
           IconButton(
@@ -119,22 +139,18 @@ class _GameHeader extends StatelessWidget {
             onPressed: onBack,
           ),
           IconButton(
-            icon: const Icon(Icons.refresh,
-                color: Color(0xFF9E9EAF), size: 24),
+            icon:
+                const Icon(Icons.refresh, color: Color(0xFF9E9EAF), size: 24),
             onPressed: onReset,
           ),
           const Spacer(),
-          Column(
-            children: [
-              Text(
-                'Level $levelNumber',
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF6C63FF),
-                ),
-              ),
-            ],
+          Text(
+            'Level $levelNumber',
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF6C63FF),
+            ),
           ),
           const Spacer(),
           HeartsDisplay(currentLives: lives, maxLives: maxLives),
@@ -145,214 +161,108 @@ class _GameHeader extends StatelessWidget {
   }
 }
 
-class _HintButton extends StatelessWidget {
-  final int lives;
-  final bool enabled;
-  final VoidCallback onPressed;
+class _BannerAction {
+  final String label;
+  final bool isPrimary;
+  final VoidCallback onTap;
 
-  const _HintButton({
-    required this.lives,
-    required this.enabled,
-    required this.onPressed,
+  const _BannerAction({
+    required this.label,
+    required this.isPrimary,
+    required this.onTap,
   });
-
-  @override
-  Widget build(BuildContext context) {
-    final canUse = enabled && lives > 0;
-    return GestureDetector(
-      onTap: canUse ? onPressed : null,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: canUse
-              ? const Color(0xFFFF9800).withOpacity(0.1)
-              : const Color(0xFFF5F5F5),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: canUse
-                ? const Color(0xFFFF9800).withOpacity(0.3)
-                : const Color(0xFFE0E0E0),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.lightbulb_outline,
-              size: 18,
-              color: canUse
-                  ? const Color(0xFFFF9800)
-                  : const Color(0xFFBDBDBD),
-            ),
-            const SizedBox(width: 4),
-            Text(
-              'Hint',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: canUse
-                    ? const Color(0xFFFF9800)
-                    : const Color(0xFFBDBDBD),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
-class _CompletionBanner extends StatelessWidget {
+class _OverlayBanner extends StatelessWidget {
+  final String title;
+  final Color titleColor;
+  final String subtitle;
   final int lives;
-  final int moveCount;
-  final VoidCallback onNext;
-  final VoidCallback onMenu;
+  final List<_BannerAction> actions;
 
-  const _CompletionBanner({
+  const _OverlayBanner({
+    required this.title,
+    required this.titleColor,
+    required this.subtitle,
     required this.lives,
-    required this.moveCount,
-    required this.onNext,
-    required this.onMenu,
+    required this.actions,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF4CAF50).withOpacity(0.2),
-            blurRadius: 20,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'Level Complete!',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF4CAF50),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Moves: $moveCount',
-            style: const TextStyle(color: Color(0xFF9E9E9E)),
-          ),
-          const SizedBox(height: 12),
-          HeartsDisplay(currentLives: lives),
-          const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              OutlinedButton(
-                onPressed: onMenu,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF9E9E9E),
-                  side: const BorderSide(color: Color(0xFFE0E0E0)),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                ),
-                child: const Text('Menu'),
-              ),
-              ElevatedButton(
-                onPressed: onNext,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6C63FF),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                ),
-                child: const Text('Next Level'),
+      color: Colors.black26,
+      child: Center(
+        child: Container(
+          margin: const EdgeInsets.all(32),
+          padding: const EdgeInsets.all(28),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: titleColor.withOpacity(0.2),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
               ),
             ],
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GameOverBanner extends StatelessWidget {
-  final VoidCallback onRetry;
-  final VoidCallback onMenu;
-
-  const _GameOverBanner({
-    required this.onRetry,
-    required this.onMenu,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFFFF6B8A).withOpacity(0.2),
-            blurRadius: 20,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'Game Over',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFFFF6B8A),
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'No hints remaining',
-            style: TextStyle(color: Color(0xFF9E9E9E)),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              OutlinedButton(
-                onPressed: onMenu,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF9E9E9E),
-                  side: const BorderSide(color: Color(0xFFE0E0E0)),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold,
+                  color: titleColor,
                 ),
-                child: const Text('Menu'),
               ),
-              ElevatedButton(
-                onPressed: onRetry,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6C63FF),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                ),
-                child: const Text('Retry'),
+              const SizedBox(height: 8),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                    color: Color(0xFF9E9E9E), fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              HeartsDisplay(currentLives: lives),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: actions.map((action) {
+                  if (action.isPrimary) {
+                    return ElevatedButton(
+                      onPressed: action.onTap,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6C63FF),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 28, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                      ),
+                      child: Text(action.label),
+                    );
+                  }
+                  return OutlinedButton(
+                    onPressed: action.onTap,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF9E9E9E),
+                      side: const BorderSide(color: Color(0xFFE0E0E0)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 28, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                    ),
+                    child: Text(action.label),
+                  );
+                }).toList(),
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }

@@ -46,7 +46,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Rotate tiles, connect the path',
+                'Tap arrows, avoid collisions',
                 style: TextStyle(
                   fontSize: 16,
                   color: Color(0xFF9E9E9E),
@@ -100,68 +100,43 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-/// Draws a simple connected-pipes logo.
+/// Draws scattered arrows logo.
 class _LogoPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 8
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+      ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round;
 
     final cx = size.width / 2;
     final cy = size.height / 2;
-    final seg = size.width * 0.18;
+    final s = size.width * 0.12;
 
-    // Draw a connected path pattern
-    final path = Path();
-    // Horizontal line
-    path.moveTo(cx - seg * 1.5, cy);
-    path.lineTo(cx + seg * 1.5, cy);
-    // Vertical from center up
-    path.moveTo(cx, cy - seg * 1.5);
-    path.lineTo(cx, cy);
-    // Corner piece going right then down
-    path.moveTo(cx + seg * 1.5, cy);
-    path.lineTo(cx + seg * 1.5, cy + seg * 1.2);
-    // Vertical left side
-    path.moveTo(cx - seg * 1.5, cy);
-    path.lineTo(cx - seg * 1.5, cy - seg * 1.2);
+    // Draw several arrows in different directions
+    _drawArrow(canvas, cx - s, cy - s * 1.5, -1, 0, s, paint); // up
+    _drawArrow(canvas, cx + s, cy - s * 0.5, 1, 0, s, paint);  // down
+    _drawArrow(canvas, cx - s * 0.5, cy + s, 0, -1, s, paint); // left
+    _drawArrow(canvas, cx + s * 0.5, cy + s * 0.3, 0, 1, s, paint); // right
+  }
 
-    canvas.drawPath(path, paint);
-
-    // Draw nodes at junctions
-    final nodePaint = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.fill;
-    canvas.drawCircle(Offset(cx, cy), 5, nodePaint);
-    canvas.drawCircle(Offset(cx - seg * 1.5, cy), 4, nodePaint);
-    canvas.drawCircle(Offset(cx + seg * 1.5, cy), 4, nodePaint);
-
-    // Arrow indicator
-    final arrowPaint = Paint()
-      ..color = const Color(0xFFFF6B8A)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3
-      ..strokeCap = StrokeCap.round;
-    // Small arrow pointing right near center
-    canvas.drawLine(
-      Offset(cx + 5, cy - seg * 1.2),
-      Offset(cx + seg, cy - seg * 1.2),
-      arrowPaint,
-    );
-    canvas.drawLine(
-      Offset(cx + seg, cy - seg * 1.2),
-      Offset(cx + seg - 6, cy - seg * 1.2 - 5),
-      arrowPaint,
-    );
-    canvas.drawLine(
-      Offset(cx + seg, cy - seg * 1.2),
-      Offset(cx + seg - 6, cy - seg * 1.2 + 5),
-      arrowPaint,
-    );
+  void _drawArrow(Canvas canvas, double cx, double cy,
+      int dr, int dc, double len, Paint paint) {
+    final dx = dc * len;
+    final dy = dr * len;
+    final tip = Offset(cx + dx, cy + dy);
+    final tail = Offset(cx - dx * 0.5, cy - dy * 0.5);
+    canvas.drawLine(tail, tip, paint);
+    // Head
+    final hl = len * 0.4;
+    if (dc != 0) {
+      canvas.drawLine(tip, Offset(tip.dx - dc * hl, tip.dy - hl * 0.5), paint);
+      canvas.drawLine(tip, Offset(tip.dx - dc * hl, tip.dy + hl * 0.5), paint);
+    } else {
+      canvas.drawLine(tip, Offset(tip.dx - hl * 0.5, tip.dy - dr * hl), paint);
+      canvas.drawLine(tip, Offset(tip.dx + hl * 0.5, tip.dy - dr * hl), paint);
+    }
   }
 
   @override
