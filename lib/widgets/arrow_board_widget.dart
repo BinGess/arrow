@@ -56,12 +56,39 @@ class ArrowBoardWidget extends StatelessWidget {
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onTapUp: (details) {
-                          final col = (details.localPosition.dx / cellSize).floor();
-                          final row = (details.localPosition.dy / cellSize).floor();
+                          final dx = details.localPosition.dx;
+                          final dy = details.localPosition.dy;
+                          final col = (dx / cellSize).floor();
+                          final row = (dy / cellSize).floor();
                           if (row < 0 || row >= rows || col < 0 || col >= cols) return;
 
-                          // Find arrow occupying this cell (head or tail)
-                          final arrow = state.arrowOccupyingCell(row, col);
+                          // First try exact cell
+                          var arrow = state.arrowOccupyingCell(row, col);
+
+                          // If missed, search neighboring cells (forgiving tap)
+                          if (arrow == null) {
+                            // Find the closest arrow within ~1.2 cell radius
+                            final tapX = dx;
+                            final tapY = dy;
+                            double bestDist = cellSize * 1.2;
+                            for (var dr = -1; dr <= 1; dr++) {
+                              for (var dc = -1; dc <= 1; dc++) {
+                                final nr = row + dr, nc = col + dc;
+                                if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+                                final candidate = state.arrowOccupyingCell(nr, nc);
+                                if (candidate == null) continue;
+                                // Distance from tap to cell center
+                                final cx = nc * cellSize + cellSize / 2;
+                                final cy = nr * cellSize + cellSize / 2;
+                                final dist = math.sqrt((tapX - cx) * (tapX - cx) + (tapY - cy) * (tapY - cy));
+                                if (dist < bestDist) {
+                                  bestDist = dist;
+                                  arrow = candidate;
+                                }
+                              }
+                            }
+                          }
+
                           if (arrow != null) {
                             provider.tapArrow(arrow.id);
                           }

@@ -51,21 +51,17 @@ class LevelGenerator {
     final cols = (11 + t * 7).round();
 
     // Arrow count: 50 → 180
-    // With moderate tails + head-only mix, the board can actually fit these.
-    // Head-only arrows occupy 1 cell; avg tailed arrow ~3-4 cells.
-    // At t=1: 432 cells, ~60% tailed with avg 4 cells + ~40% head-only:
-    //   180 * 0.6 * 4 + 180 * 0.4 * 1 = 432 + 72 = 504 → generator stops
-    //   when board is full, so actual count will be ~130-150. That's fine.
     final count = (50 + t * 130).round();
 
     // Max tail length: 3 → 7 (moderate — don't hog too many cells)
     final maxTail = (3 + t * 4).round();
 
-    // Tail chance: 0.45 → 0.92 (early levels have many head-only arrows)
-    final tailChance = 0.45 + t * 0.47;
+    // Tail chance: 0.75 → 0.97 (most arrows MUST have tails — avoids
+    // boring clusters of head-only arrows all pointing the same way)
+    final tailChance = 0.75 + t * 0.22;
 
-    // L-tail chance: 0.35 → 0.88
-    final lTailChance = 0.35 + t * 0.53;
+    // L-tail chance: 0.40 → 0.88
+    final lTailChance = 0.40 + t * 0.48;
 
     // Min chain depth: 3 → 15
     final minDepth = (3 + t * 12).round();
@@ -161,37 +157,31 @@ class LevelGenerator {
 
       final useLTail = tailLen >= 2 && random.nextDouble() < lTailChance;
 
-      final arrow = _placeBestArrow(
+      var arrow = _placeBestArrow(
         rows, cols, occupied, placed, nextId, tailLen, useLTail, random,
       );
 
-      if (arrow == null) {
-        // Try shorter tail
-        if (tailLen > 1) {
-          final shorter = _placeBestArrow(
-            rows, cols, occupied, placed, nextId, 1, false, random,
+      // Progressively shorten tail before giving up — avoid head-only arrows
+      if (arrow == null && tailLen > 2) {
+        for (var shorter = tailLen - 1; shorter >= 2; shorter--) {
+          arrow = _placeBestArrow(
+            rows, cols, occupied, placed, nextId, shorter, useLTail, random,
           );
-          if (shorter != null) {
-            placed.add(shorter);
-            occupied.addAll(shorter.occupiedCells);
-            nextId++;
-            continue;
-          }
+          if (arrow != null) break;
         }
-        // Try head-only
-        if (tailLen > 0) {
-          final headOnly = _placeBestArrow(
-            rows, cols, occupied, placed, nextId, 0, false, random,
-          );
-          if (headOnly != null) {
-            placed.add(headOnly);
-            occupied.addAll(headOnly.occupiedCells);
-            nextId++;
-            continue;
-          }
-        }
-        break; // Board is truly full
       }
+      if (arrow == null && tailLen > 1) {
+        arrow = _placeBestArrow(
+          rows, cols, occupied, placed, nextId, 1, false, random,
+        );
+      }
+      // Head-only as absolute last resort
+      if (arrow == null && tailLen > 0) {
+        arrow = _placeBestArrow(
+          rows, cols, occupied, placed, nextId, 0, false, random,
+        );
+      }
+      if (arrow == null) break; // Board is truly full
 
       placed.add(arrow);
       occupied.addAll(arrow.occupiedCells);
@@ -215,6 +205,16 @@ class LevelGenerator {
     for (final a in placed) {
       placedPaths[a.id] = a.flightPath(rows, cols).toSet();
     }
+
+    // Direction balance: count how many arrows point each way.
+    // Give bonus to underrepresented directions to avoid monotony.
+    final dirCount = <Direction, int>{
+      for (final d in Direction.values) d: 0,
+    };
+    for (final a in placed) {
+      dirCount[a.direction] = dirCount[a.direction]! + 1;
+    }
+    final maxDirCount = dirCount.values.fold(0, max);
 
     var bestArrow = <Arrow>[];
     var bestScore = -1;
@@ -259,8 +259,10 @@ class LevelGenerator {
               }
             }
 
-            // Add randomness to avoid identical puzzles
-            score = score * 10 + random.nextInt(5);
+            // Direction diversity bonus: prefer underrepresented directions
+            // This prevents boring clusters all pointing the same way.
+            final dirBonus = maxDirCount - dirCount[dir]!;
+            score = score * 10 + dirBonus * 3 + random.nextInt(5);
 
             if (score > bestScore) {
               bestScore = score;
