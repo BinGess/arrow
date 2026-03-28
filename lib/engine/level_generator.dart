@@ -8,53 +8,53 @@ import 'level_validator.dart';
 ///
 /// Arrows are placed one at a time. Each new arrow MUST have a clear
 /// flight path (no collision with any already-placed arrow). This means
-/// the reverse of placement order is always a valid removal sequence:
-/// the last-placed arrow can always fly out first, then the second-to-last, etc.
+/// the reverse of placement order is always a valid removal sequence.
 ///
-/// To maximize difficulty, we SCORE each candidate placement by how many
-/// already-placed arrows it BLOCKS (its body occupies cells in their flight
-/// paths). More blocking = harder puzzle = deeper dependency chains.
-///
-/// Each level uses a deterministic seed (based on level number) so the
-/// same level always produces the same puzzle layout.
+/// Difficulty levers:
+///   1. **Minimum flight path**: arrows must have ≥ N cells ahead before
+///      exiting the board. Prevents trivial edge-hugging free arrows.
+///   2. **Blocking score**: prefer placements that block existing arrows.
+///   3. **Flight path length bonus**: longer paths = more likely to be
+///      blocked by future arrows = fewer "free at start" arrows.
+///   4. **Direction diversity**: balanced distribution across 4 directions.
+///   5. **Quality gates**: reject levels with too many free/head-only arrows.
 class LevelGenerator {
   final int? _baseSeed;
 
   LevelGenerator({int? seed}) : _baseSeed = seed;
 
-  /// Continuous difficulty interpolation.
-  ///
-  /// Every single level is unique — no two adjacent levels share the same
-  /// config. Parameters are linearly interpolated from Level 1 → Level 50.
+  /// Continuous difficulty interpolation — every level is unique.
   static ({
     int rows,
     int cols,
     int count,
     int maxTail,
     double lTailChance,
+    int minFlightPath,  // arrows must have ≥ this many cells in flight path
     int minDepth,
+    double maxFreeRatio, // max fraction of arrows free at start
     int lives,
   }) configForLevel(int level) {
     final t = ((level - 1) / 49.0).clamp(0.0, 1.0);
 
-    // Grid size: 14x11 → 24x18
     final rows = (14 + t * 10).round();
     final cols = (11 + t * 7).round();
-
-    // Arrow count: 50 → 180
     final count = (50 + t * 130).round();
-
-    // Max tail length: 3 → 7
     final maxTail = (3 + t * 4).round();
-
-    // L-tail chance among tailed arrows: 0.40 → 0.88
     final lTailChance = 0.40 + t * 0.48;
-
-    // Min chain depth: 3 → 15
     final minDepth = (3 + t * 12).round();
-
-    // Lives: 5 → 1
     final lives = (5 - t * 4).round().clamp(1, 5);
+
+    // Minimum flight path length: 3 → 5
+    // Prevents arrows from hugging edges and being trivially free.
+    // On a 14x11 grid, min=3 means arrows can't point at an edge < 3 cells away.
+    // On a 24x18 grid, min=5 is stricter — all arrows are deep inside.
+    final minFlightPath = (3 + t * 2).round();
+
+    // Max free arrows at start: 15% → 5%
+    // Level 1: up to 15% can be free (some easy picks to get started)
+    // Level 50: only 5% free (must search hard for valid first moves)
+    final maxFreeRatio = 0.15 - t * 0.10;
 
     return (
       rows: rows,
@@ -62,55 +62,64 @@ class LevelGenerator {
       count: count,
       maxTail: maxTail,
       lTailChance: lTailChance,
+      minFlightPath: minFlightPath,
       minDepth: minDepth,
+      maxFreeRatio: maxFreeRatio,
       lives: lives,
     );
   }
 
-  /// Generate a validated, solvable level.
-  ///
-  /// Uses a deterministic seed per level so the same level number
-  /// always produces the same puzzle layout.
   ({List<Arrow> arrows, int rows, int cols, int lives}) generate(int levelNumber) {
     final config = configForLevel(levelNumber);
 
-    for (var attempt = 0; attempt < 15; attempt++) {
+    for (var attempt = 0; attempt < 20; attempt++) {
       final seed = _baseSeed ?? (levelNumber * 1000 + attempt * 7 + 42);
       final random = Random(seed + attempt);
+
+      // Relax minFlightPath slightly on later attempts to avoid infinite loops
+      final effectiveMinFlight = attempt < 10
+          ? config.minFlightPath
+          : max(2, config.minFlightPath - 1);
+
       final result = _generateLevel(
         rows: config.rows,
         cols: config.cols,
         targetCount: config.count,
         maxTail: config.maxTail,
         lTailChance: config.lTailChance,
+        minFlightPath: effectiveMinFlight,
         random: random,
       );
 
       final arrows = result.arrows;
-      if (arrows.isEmpty) continue;
+      if (arrows.length < 10) continue;
 
       // ── Quality gates ──
-      // 1. Head-only arrows must be ≤ 15% of total
-      final headOnlyCount = arrows.where((a) => !a.hasTail).length;
-      final headOnlyRatio = headOnlyCount / arrows.length;
-      if (headOnlyRatio > 0.15 && attempt < 12) continue;
+      final relaxed = attempt >= 15; // relax on late attempts
 
-      // 2. No single direction may exceed 35% of total
+      // 1. Head-only ≤ 15%
+      final headOnlyCount = arrows.where((a) => !a.hasTail).length;
+      if (headOnlyCount / arrows.length > 0.15 && !relaxed) continue;
+
+      // 2. Direction balance: no direction > 35%
       final dirCounts = <Direction, int>{};
       for (final a in arrows) {
         dirCounts[a.direction] = (dirCounts[a.direction] ?? 0) + 1;
       }
       final maxDirRatio = dirCounts.values.fold(0, max) / arrows.length;
-      if (maxDirRatio > 0.35 && attempt < 12) continue;
+      if (maxDirRatio > 0.35 && !relaxed) continue;
 
       // 3. Solvability
       if (!LevelValidator.isSolvable(arrows, result.rows, result.cols)) continue;
 
-      // 4. Chain depth (soft: relax after enough attempts)
-      if (attempt < 7) {
-        final metrics = LevelValidator.analyzeMetrics(arrows, result.rows, result.cols);
-        if (metrics.maxChainDepth < config.minDepth) continue;
-      }
+      final metrics = LevelValidator.analyzeMetrics(arrows, result.rows, result.cols);
+
+      // 4. Free arrows at start ≤ maxFreeRatio
+      final freeRatio = metrics.freeAtStart / arrows.length;
+      if (freeRatio > config.maxFreeRatio && !relaxed) continue;
+
+      // 5. Chain depth
+      if (metrics.maxChainDepth < config.minDepth && attempt < 10) continue;
 
       return (arrows: arrows, rows: result.rows, cols: result.cols, lives: config.lives);
     }
@@ -127,6 +136,7 @@ class LevelGenerator {
     required int targetCount,
     required int maxTail,
     required double lTailChance,
+    required int minFlightPath,
     required Random random,
   }) {
     final placed = <Arrow>[];
@@ -134,50 +144,48 @@ class LevelGenerator {
     var nextId = 0;
     var headOnlyCount = 0;
 
-    // Hard cap: at most 15% of placed arrows can be head-only.
-    int headOnlyBudget(int total) => max(1, (total * 0.15).floor());
+    int headOnlyBudget(int total) => max(1, (total * 0.12).floor());
 
     for (var i = 0; i < targetCount; i++) {
       final progress = i / targetCount;
 
-      // Every arrow attempts a tail. No random tailChance —
-      // head-only is ONLY allowed as a last resort when nothing else fits.
+      // Every arrow attempts a tail.
       final budget = max(1, (maxTail * (1.0 - progress * 0.3)).round());
       final tailLen = 1 + random.nextInt(budget);
       final useLTail = tailLen >= 2 && random.nextDouble() < lTailChance;
 
       var arrow = _placeBestArrow(
-        rows, cols, occupied, placed, nextId, tailLen, useLTail, random,
+        rows, cols, occupied, placed, nextId,
+        tailLen, useLTail, minFlightPath, random,
       );
 
-      // Progressive shortening — try to keep at least tail=1
+      // Progressive shortening — keep at least tail=1
       if (arrow == null && tailLen > 2) {
         for (var shorter = tailLen - 1; shorter >= 2; shorter--) {
           arrow = _placeBestArrow(
-            rows, cols, occupied, placed, nextId, shorter, useLTail, random,
+            rows, cols, occupied, placed, nextId,
+            shorter, useLTail, minFlightPath, random,
           );
           if (arrow != null) break;
         }
       }
       if (arrow == null && tailLen > 1) {
         arrow = _placeBestArrow(
-          rows, cols, occupied, placed, nextId, 1, false, random,
+          rows, cols, occupied, placed, nextId,
+          1, false, minFlightPath, random,
         );
       }
 
       // Head-only only if under budget
       if (arrow == null && headOnlyCount < headOnlyBudget(placed.length + 1)) {
         arrow = _placeBestArrow(
-          rows, cols, occupied, placed, nextId, 0, false, random,
+          rows, cols, occupied, placed, nextId,
+          0, false, minFlightPath, random,
         );
         if (arrow != null) headOnlyCount++;
       }
 
-      if (arrow == null) break; // Board full
-
-      if (!arrow.hasTail && arrow.tailSegments.isEmpty) {
-        // Track (redundant with above but defensive)
-      }
+      if (arrow == null) break;
 
       placed.add(arrow);
       occupied.addAll(arrow.occupiedCells);
@@ -188,19 +196,22 @@ class LevelGenerator {
     return (arrows: arrows, rows: rows, cols: cols);
   }
 
-  /// Find the best arrow placement.
-  /// Scoring: blocking × 10 + direction_diversity × 8 + randomness
+  /// Score-based placement:
+  ///   blocking × 10  — how many existing arrows this placement blocks
+  ///   flightLen × 3  — longer flight path = more likely blocked by future arrows
+  ///   dirBonus × 8   — prefer underrepresented directions
+  ///   randomness      — tie-breaker
   Arrow? _placeBestArrow(
     int rows, int cols, Set<(int, int)> occupied,
-    List<Arrow> placed, int id, int tailLen, bool useLTail, Random random,
+    List<Arrow> placed, int id, int tailLen, bool useLTail,
+    int minFlightPath, Random random,
   ) {
-    // Pre-compute flight paths of all placed arrows for blocking score
+    // Pre-compute
     final placedPaths = <int, Set<(int, int)>>{};
     for (final a in placed) {
       placedPaths[a.id] = a.flightPath(rows, cols).toSet();
     }
 
-    // Direction balance
     final dirCount = <Direction, int>{
       for (final d in Direction.values) d: 0,
     };
@@ -212,7 +223,7 @@ class LevelGenerator {
     var bestArrow = <Arrow>[];
     var bestScore = -1;
 
-    // Randomized cell order to avoid spatial bias
+    // Randomized cell order
     final cells = <(int, int)>[];
     for (var r = 0; r < rows; r++) {
       for (var c = 0; c < cols; c++) {
@@ -220,14 +231,18 @@ class LevelGenerator {
       }
     }
     cells.shuffle(random);
-
-    // For large boards, sample a subset of cells to keep generation fast
-    final maxCells = min(cells.length, 200);
+    final maxCells = min(cells.length, 250);
 
     for (var ci = 0; ci < maxCells; ci++) {
       final (r, c) = cells[ci];
 
       for (final dir in Direction.values) {
+        // ── Quick flight path length check BEFORE building tail options ──
+        // Count how many cells from (r,c) in direction dir before hitting
+        // the board edge. If < minFlightPath, skip this direction entirely.
+        final flightLen = _flightPathLength(r, c, dir, rows, cols);
+        if (flightLen < minFlightPath) continue;
+
         final tailOptions = _buildTailOptions(
           r, c, dir, tailLen, useLTail, rows, cols,
         );
@@ -240,18 +255,16 @@ class LevelGenerator {
 
           final arrowCells = arrow.occupiedCells;
 
-          // Bounds check
           if (!_allInBounds(arrowCells, rows, cols)) continue;
-          // No overlap with existing arrows
           if (arrowCells.any(occupied.contains)) continue;
-          // No self-overlap
           if (arrowCells.toSet().length != arrowCells.length) continue;
 
-          // Flight path must be clear
+          // Flight path must be clear at placement time
           final path = arrow.flightPath(rows, cols);
           if (path.any(occupied.contains)) continue;
 
-          // Blocking score
+          // ── Scoring ──
+          // 1. Blocking: body cells in existing arrows' flight paths
           final bodyCells = arrowCells.toSet();
           var blockCount = 0;
           for (final entry in placedPaths.entries) {
@@ -260,11 +273,15 @@ class LevelGenerator {
             }
           }
 
-          // Direction diversity bonus (strong weight)
+          // 2. Flight path length: longer = more likely to be blocked later
+          //    This is the KEY fix — incentivizes interior placements with
+          //    long paths that future arrows can cross.
+          final flightBonus = path.length;
+
+          // 3. Direction diversity
           final dirBonus = maxDirCount - dirCount[dir]!;
 
-          // Combined score: blocking and direction diversity are equally important
-          final score = blockCount * 10 + dirBonus * 8 + random.nextInt(5);
+          final score = blockCount * 10 + flightBonus * 3 + dirBonus * 8 + random.nextInt(5);
 
           if (score > bestScore) {
             bestScore = score;
@@ -276,11 +293,12 @@ class LevelGenerator {
       }
     }
 
-    // If sampling missed valid placements, try remaining cells with tail=0 check
+    // Overflow search for head-only if sampling missed
     if (bestArrow.isEmpty && maxCells < cells.length && tailLen == 0) {
       for (var ci = maxCells; ci < cells.length; ci++) {
         final (r, c) = cells[ci];
         for (final dir in Direction.values) {
+          if (_flightPathLength(r, c, dir, rows, cols) < minFlightPath) continue;
           final arrow = Arrow(id: id, row: r, col: c, direction: dir);
           final path = arrow.flightPath(rows, cols);
           if (!path.any(occupied.contains)) {
@@ -292,6 +310,16 @@ class LevelGenerator {
 
     if (bestArrow.isEmpty) return null;
     return bestArrow[random.nextInt(bestArrow.length)];
+  }
+
+  /// Count cells in flight path (from head in direction to edge).
+  int _flightPathLength(int row, int col, Direction dir, int rows, int cols) {
+    switch (dir) {
+      case Direction.up:    return row;
+      case Direction.down:  return rows - 1 - row;
+      case Direction.left:  return col;
+      case Direction.right: return cols - 1 - col;
+    }
   }
 
   /// Simple fallback generator.
@@ -308,6 +336,7 @@ class LevelGenerator {
         for (var c = 0; c < cols; c++) {
           if (occupied.contains((r, c))) continue;
           for (final dir in Direction.values) {
+            if (_flightPathLength(r, c, dir, rows, cols) < 3) continue;
             final arrow = Arrow(id: nextId, row: r, col: c, direction: dir);
             final path = arrow.flightPath(rows, cols);
             if (!path.any(occupied.contains)) {

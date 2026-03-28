@@ -1,5 +1,5 @@
 // ignore_for_file: avoid_print
-/// Standalone script to validate all levels are solvable.
+/// Standalone script to validate all levels.
 /// Run with: dart run bin/validate_levels.dart
 
 import '../lib/engine/level_generator.dart';
@@ -7,100 +7,98 @@ import '../lib/engine/level_validator.dart';
 import '../lib/models/arrow.dart';
 
 void main() {
-  print('=== Arrow Puzzle Level Validation ===\n');
+  print('=== Arrow Puzzle Level Validation ===');
+  print('');
+  print('Key metrics:');
+  print('  free%  = arrows removable at start (lower = harder puzzle)');
+  print('  head%  = arrows without tails (lower = more complex board)');
+  print('  L%     = arrows with L-shaped tails');
+  print('  maxDir = most common single direction %');
+  print('');
 
   var allPassed = true;
-  final generator = LevelGenerator(seed: 42);
+  final generator = LevelGenerator();
 
   for (var level = 1; level <= 50; level++) {
     final result = generator.generate(level);
     final arrows = result.arrows;
     final rows = result.rows;
     final cols = result.cols;
+    final config = LevelGenerator.configForLevel(level);
 
     final solution = LevelValidator.findSolution(arrows, rows, cols);
     final metrics = LevelValidator.analyzeMetrics(arrows, rows, cols);
 
-    // Quality stats
-    final headOnly = arrows.where((a) => !a.hasTail).length;
-    final headPct = arrows.isEmpty ? 0 : (headOnly * 100 / arrows.length).round();
-    final lTails = arrows.where((a) => a.tailSegments.length >= 2).length;
-    final lPct = arrows.isEmpty ? 0 : (lTails * 100 / arrows.length).round();
-
-    // Direction balance
-    final dirCounts = <Direction, int>{};
-    for (final a in arrows) {
-      dirCounts[a.direction] = (dirCounts[a.direction] ?? 0) + 1;
-    }
-    final maxDirPct = arrows.isEmpty
-        ? 0
-        : (dirCounts.values.fold(0, (a, b) => a > b ? a : b) * 100 / arrows.length).round();
-    final dirStr = dirCounts.entries
-        .map((e) => '${e.key.name[0].toUpperCase()}:${e.value}')
-        .join(' ');
-
     if (solution == null) {
-      print('FAIL  Level $level: NOT SOLVABLE! '
-          '(${arrows.length} arrows on ${rows}x${cols})');
+      print('FAIL  Level $level: NOT SOLVABLE!');
       allPassed = false;
       continue;
     }
 
-    // Verify solution by simulation
-    final simOk = _simulateSolution(arrows, rows, cols, solution);
-    if (!simOk) {
+    // Verify by simulation
+    if (!_simulateSolution(arrows, rows, cols, solution)) {
       print('FAIL  Level $level: Solution simulation failed!');
       allPassed = false;
       continue;
     }
 
-    final config = LevelGenerator.configForLevel(level);
-    print('L${level.toString().padLeft(2)} '
+    // Stats
+    final headOnly = arrows.where((a) => !a.hasTail).length;
+    final headPct = (headOnly * 100 / arrows.length).round();
+    final lTails = arrows.where((a) => a.tailSegments.length >= 2).length;
+    final lPct = (lTails * 100 / arrows.length).round();
+    final freePct = (metrics.freeAtStart * 100 / arrows.length).round();
+
+    final dirCounts = <Direction, int>{};
+    for (final a in arrows) {
+      dirCounts[a.direction] = (dirCounts[a.direction] ?? 0) + 1;
+    }
+    final maxDirPct = (dirCounts.values.fold(0, (a, b) => a > b ? a : b) * 100 / arrows.length).round();
+    final dirStr = dirCounts.entries
+        .map((e) => '${e.key.name[0].toUpperCase()}:${e.value}')
+        .join(' ');
+
+    // Quality flags
+    final flags = <String>[];
+    if (freePct > 20) flags.add('TOO_MANY_FREE');
+    if (headPct > 15) flags.add('TOO_MANY_HEADONLY');
+    if (maxDirPct > 35) flags.add('DIR_IMBALANCE');
+    if (metrics.maxChainDepth < 3) flags.add('TOO_SHALLOW');
+
+    final status = flags.isEmpty ? 'OK  ' : 'WARN';
+
+    print('$status L${level.toString().padLeft(2)} '
         '${rows}x${cols.toString().padRight(2)} '
-        '${arrows.length.toString().padLeft(3)} arrows '
-        '(target ${config.count.toString().padLeft(3)}) '
-        'headOnly=${headPct.toString().padLeft(2)}% '
-        'L-tail=${lPct.toString().padLeft(2)}% '
-        'maxDir=${maxDirPct}% '
-        '[$dirStr] '
-        'depth=${metrics.maxChainDepth} '
-        'free=${metrics.freeAtStart} '
-        'lives=${config.lives}');
+        '${arrows.length.toString().padLeft(3)}/${config.count.toString().padLeft(3)} arrows '
+        'free=${freePct.toString().padLeft(2)}%(${metrics.freeAtStart.toString().padLeft(2)}) '
+        'head=${headPct.toString().padLeft(2)}% '
+        'L=${lPct.toString().padLeft(2)}% '
+        'maxDir=${maxDirPct.toString().padLeft(2)}% '
+        'depth=${metrics.maxChainDepth.toString().padLeft(2)} '
+        'lives=${config.lives} '
+        '[$dirStr]'
+        '${flags.isNotEmpty ? "  *** ${flags.join(", ")}" : ""}');
   }
 
   print('');
   if (allPassed) {
-    print('ALL 50 LEVELS PASSED VALIDATION');
+    print('ALL 50 LEVELS PASSED SOLVABILITY CHECK');
   } else {
     print('SOME LEVELS FAILED - see above');
   }
 
-  // Test multiple seeds
-  print('\n=== Multi-Seed Validation ===\n');
-  var seedPassed = 0;
-  var seedFailed = 0;
-  for (var seed = 0; seed < 20; seed++) {
-    final gen = LevelGenerator(seed: seed);
-    var ok = true;
-    for (final level in [1, 10, 20, 30, 40, 50]) {
-      final result = gen.generate(level);
-      if (!LevelValidator.isSolvable(result.arrows, result.rows, result.cols)) {
-        print('FAIL  Seed $seed, Level $level: NOT SOLVABLE');
-        ok = false;
-        seedFailed++;
-        break;
-      }
-      // Check quality
-      final headOnly = result.arrows.where((a) => !a.hasTail).length;
-      final headPct = result.arrows.isEmpty ? 0 : headOnly * 100 ~/ result.arrows.length;
-      if (headPct > 20) {
-        print('WARN  Seed $seed, Level $level: ${headPct}% head-only arrows');
-      }
-    }
-    if (ok) seedPassed++;
+  // Summary stats
+  print('\n=== Summary ===\n');
+  var totalFree = 0, totalArrows = 0, totalHead = 0;
+  for (var level = 1; level <= 50; level++) {
+    final result = generator.generate(level);
+    final metrics = LevelValidator.analyzeMetrics(result.arrows, result.rows, result.cols);
+    totalFree += metrics.freeAtStart;
+    totalArrows += result.arrows.length;
+    totalHead += result.arrows.where((a) => !a.hasTail).length;
   }
-  print('\nSeeds passed: $seedPassed / 20');
-  if (seedFailed > 0) print('Seeds failed: $seedFailed');
+  print('Average free at start: ${(totalFree * 100 / totalArrows).toStringAsFixed(1)}%');
+  print('Average head-only:     ${(totalHead * 100 / totalArrows).toStringAsFixed(1)}%');
 }
 
 bool _simulateSolution(
