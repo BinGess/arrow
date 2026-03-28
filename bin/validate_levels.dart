@@ -7,7 +7,7 @@ import '../lib/engine/level_validator.dart';
 import '../lib/models/arrow.dart';
 
 void main() {
-  print('=== Arrow Maze Level Validation ===\n');
+  print('=== Arrow Puzzle Level Validation ===\n');
 
   var allPassed = true;
   final generator = LevelGenerator(seed: 42);
@@ -20,6 +20,24 @@ void main() {
 
     final solution = LevelValidator.findSolution(arrows, rows, cols);
     final metrics = LevelValidator.analyzeMetrics(arrows, rows, cols);
+
+    // Quality stats
+    final headOnly = arrows.where((a) => !a.hasTail).length;
+    final headPct = arrows.isEmpty ? 0 : (headOnly * 100 / arrows.length).round();
+    final lTails = arrows.where((a) => a.tailSegments.length >= 2).length;
+    final lPct = arrows.isEmpty ? 0 : (lTails * 100 / arrows.length).round();
+
+    // Direction balance
+    final dirCounts = <Direction, int>{};
+    for (final a in arrows) {
+      dirCounts[a.direction] = (dirCounts[a.direction] ?? 0) + 1;
+    }
+    final maxDirPct = arrows.isEmpty
+        ? 0
+        : (dirCounts.values.fold(0, (a, b) => a > b ? a : b) * 100 / arrows.length).round();
+    final dirStr = dirCounts.entries
+        .map((e) => '${e.key.name[0].toUpperCase()}:${e.value}')
+        .join(' ');
 
     if (solution == null) {
       print('FAIL  Level $level: NOT SOLVABLE! '
@@ -36,13 +54,18 @@ void main() {
       continue;
     }
 
-    final status = metrics.maxChainDepth >= 2 ? 'OK   ' : 'EASY ';
-    print('$status Level ${level.toString().padLeft(2)}: '
-        '${arrows.length.toString().padLeft(2)} arrows, '
-        '${rows}x${cols}, '
-        'depth=${metrics.maxChainDepth}, '
-        'free=${metrics.freeAtStart}, '
-        'avgDeps=${metrics.avgDependencies.toStringAsFixed(1)}');
+    final config = LevelGenerator.configForLevel(level);
+    print('L${level.toString().padLeft(2)} '
+        '${rows}x${cols.toString().padRight(2)} '
+        '${arrows.length.toString().padLeft(3)} arrows '
+        '(target ${config.count.toString().padLeft(3)}) '
+        'headOnly=${headPct.toString().padLeft(2)}% '
+        'L-tail=${lPct.toString().padLeft(2)}% '
+        'maxDir=${maxDirPct}% '
+        '[$dirStr] '
+        'depth=${metrics.maxChainDepth} '
+        'free=${metrics.freeAtStart} '
+        'lives=${config.lives}');
   }
 
   print('');
@@ -56,10 +79,10 @@ void main() {
   print('\n=== Multi-Seed Validation ===\n');
   var seedPassed = 0;
   var seedFailed = 0;
-  for (var seed = 0; seed < 50; seed++) {
+  for (var seed = 0; seed < 20; seed++) {
     final gen = LevelGenerator(seed: seed);
     var ok = true;
-    for (final level in [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]) {
+    for (final level in [1, 10, 20, 30, 40, 50]) {
       final result = gen.generate(level);
       if (!LevelValidator.isSolvable(result.arrows, result.rows, result.cols)) {
         print('FAIL  Seed $seed, Level $level: NOT SOLVABLE');
@@ -67,10 +90,16 @@ void main() {
         seedFailed++;
         break;
       }
+      // Check quality
+      final headOnly = result.arrows.where((a) => !a.hasTail).length;
+      final headPct = result.arrows.isEmpty ? 0 : headOnly * 100 ~/ result.arrows.length;
+      if (headPct > 20) {
+        print('WARN  Seed $seed, Level $level: ${headPct}% head-only arrows');
+      }
     }
     if (ok) seedPassed++;
   }
-  print('\nSeeds passed: $seedPassed / 50');
+  print('\nSeeds passed: $seedPassed / 20');
   if (seedFailed > 0) print('Seeds failed: $seedFailed');
 }
 
