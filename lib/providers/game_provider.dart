@@ -104,8 +104,10 @@ class GameProvider extends ChangeNotifier {
       _gameState = newState;
       notifyListeners();
 
-      // After animation completes
-      Future.delayed(const Duration(milliseconds: 400), () {
+      // Duration matches the snake animation controller
+      final bodyLen = arrow.occupiedCells.length;
+      final animMs = (150 + bodyLen * 50 + 12 * 30).clamp(200, 800) + 50;
+      Future.delayed(Duration(milliseconds: animMs), () {
         _flyingArrow = null;
         _isAnimating = false;
         if (newState.isComplete) {
