@@ -320,6 +320,23 @@ class _SnakeFlyWidgetState extends State<_SnakeFlyWidget>
     );
   }
 
+  /// Extract all waypoints along the track between two distances.
+  /// Returns a list of points that follows the track exactly (no diagonal cuts).
+  List<Offset> _trackSubPath(double startDist, double endDist) {
+    final points = <Offset>[];
+    points.add(_positionAtDistance(startDist));
+
+    // Add all track waypoints that fall between startDist and endDist
+    for (var i = 0; i < _trackDistances.length; i++) {
+      if (_trackDistances[i] > startDist && _trackDistances[i] < endDist) {
+        points.add(_track[i]);
+      }
+    }
+
+    points.add(_positionAtDistance(endDist));
+    return points;
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -330,15 +347,12 @@ class _SnakeFlyWidgetState extends State<_SnakeFlyWidget>
         // At t=1: the tail tip has traveled enough to fully exit
         final advance = _controller.value * (_totalTrackLength);
 
-        // Each segment's initial distance along the track:
-        // tail_tip = 0, ..., head = _trackDistances[_bodyLen - 1]
-        final positions = List.generate(_bodyLen, (i) {
-          // Segment 0 = tail_tip (front of track), segment _bodyLen-1 = head
-          // We want head first in the list for drawing
-          final segIdx = _bodyLen - 1 - i;
-          final initialDist = _trackDistances[segIdx];
-          return _positionAtDistance(initialDist + advance);
-        });
+        // Tail tip starts at distance 0, head starts at _trackDistances[_bodyLen - 1]
+        final tailDist = advance; // tail tip's current distance
+        final headDist = _trackDistances[_bodyLen - 1] + advance; // head's current distance
+
+        // Extract the sub-path along the track (follows corners correctly)
+        final pathPoints = _trackSubPath(tailDist, headDist);
 
         final opacity = (1.0 - _controller.value * 0.6).clamp(0.0, 1.0);
 
@@ -348,7 +362,7 @@ class _SnakeFlyWidgetState extends State<_SnakeFlyWidget>
             widget.gridRows * widget.cellSize,
           ),
           painter: _SnakePainter(
-            bodyPositions: positions,
+            bodyPositions: pathPoints,
             direction: widget.arrow.direction,
             cellSize: widget.cellSize,
             opacity: opacity,
@@ -366,7 +380,7 @@ class _SnakeFlyWidgetState extends State<_SnakeFlyWidget>
 
 /// Paints the flying snake body + arrowhead.
 class _SnakePainter extends CustomPainter {
-  final List<Offset> bodyPositions; // [head, tail1, tail2, ...]
+  final List<Offset> bodyPositions; // [tail_tip, ..., waypoints, ..., head]
   final Direction direction;
   final double cellSize;
   final double opacity;
@@ -384,7 +398,7 @@ class _SnakePainter extends CustomPainter {
     final color = const Color(0xFF6C63FF).withOpacity(opacity);
     final sw = (cellSize * 0.08).clamp(2.0, 4.5);
 
-    // Body line
+    // Body line (follows track waypoints exactly — no diagonal cuts)
     if (bodyPositions.length > 1) {
       final linePaint = Paint()
         ..color = color..strokeWidth = sw
@@ -397,13 +411,13 @@ class _SnakePainter extends CustomPainter {
       }
       canvas.drawPath(path, linePaint);
 
-      // Tail end cap
-      canvas.drawCircle(bodyPositions.last, sw * 0.8,
+      // Tail end cap (first point = tail tip)
+      canvas.drawCircle(bodyPositions.first, sw * 0.8,
         Paint()..color = color..style = PaintingStyle.fill);
     }
 
-    // Arrowhead at position[0]
-    final head = bodyPositions[0];
+    // Arrowhead at the last point (head)
+    final head = bodyPositions.last;
     final len = cellSize * 0.32;
     final hl = len * 0.45;
     final paint = Paint()
@@ -412,9 +426,9 @@ class _SnakePainter extends CustomPainter {
       ..strokeCap = StrokeCap.round..strokeJoin = StrokeJoin.round;
 
     final angle = _dirAngle(direction);
-    final tail = Offset(head.dx - len * math.cos(angle), head.dy - len * math.sin(angle));
+    final tailPt = Offset(head.dx - len * math.cos(angle), head.dy - len * math.sin(angle));
     final tip = Offset(head.dx + len * math.cos(angle), head.dy + len * math.sin(angle));
-    canvas.drawLine(tail, tip, paint);
+    canvas.drawLine(tailPt, tip, paint);
     canvas.drawLine(tip, Offset(
       tip.dx + hl * math.cos(angle + math.pi * 0.8),
       tip.dy + hl * math.sin(angle + math.pi * 0.8),

@@ -39,7 +39,7 @@ class LevelSelectScreen extends StatelessWidget {
               itemCount: GameProvider.totalLevels,
               itemBuilder: (context, index) {
                 final level = index + 1;
-                final isUnlocked = level <= provider.unlockedLevel;
+                const isUnlocked = true;
                 final stars = provider.starsForLevel(level);
 
                 return _LevelTile(
