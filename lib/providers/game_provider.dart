@@ -1,26 +1,25 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../engine/game_engine.dart';
-import '../engine/maze_generator.dart';
-import '../models/direction.dart';
+import '../engine/puzzle_generator.dart';
+import '../engine/puzzle_solver.dart';
 import '../models/game_state.dart';
-import '../models/maze_level.dart';
+import '../models/puzzle_level.dart';
+import '../models/puzzle_tile.dart';
 
-/// Manages game state and persistence.
+/// Manages game state, level progression, and persistence.
 class GameProvider extends ChangeNotifier {
   static const int totalLevels = 50;
   static const String _unlockedKey = 'unlocked_level';
   static const String _starsKey = 'level_stars_';
 
-  final MazeGenerator _generator = MazeGenerator();
+  final PuzzleGenerator _generator = PuzzleGenerator();
 
   int _unlockedLevel = 1;
   int get unlockedLevel => _unlockedLevel;
 
-  MazeLevel? _currentLevel;
-  MazeLevel? get currentLevel => _currentLevel;
+  PuzzleLevel? _currentLevel;
+  PuzzleLevel? get currentLevel => _currentLevel;
 
-  GameEngine? _engine;
   GameState? _gameState;
   GameState? get gameState => _gameState;
 
@@ -60,60 +59,66 @@ class GameProvider extends ChangeNotifier {
   /// Start a specific level.
   void startLevel(int levelNumber) {
     _currentLevel = _generator.generate(levelNumber);
-    _engine = GameEngine(_currentLevel!);
-    _gameState = _engine!.createInitialState();
+    final connected = PuzzleSolver.findConnectedTiles(_currentLevel!);
+    _gameState = GameState(
+      lives: 5,
+      connectedTiles: connected,
+    );
     notifyListeners();
   }
 
-  /// Tap on a cell in the maze.
-  void tapCell(int row, int col) {
-    if (_engine == null || _gameState == null) return;
+  /// Rotate a tile at the given position.
+  void rotateTile(int row, int col) {
+    if (_currentLevel == null || _gameState == null) return;
+    if (_gameState!.isComplete || _gameState!.isGameOver) return;
 
-    final newState = _engine!.handleTap(_gameState!, row, col);
-    if (newState != _gameState) {
-      _gameState = newState;
-      if (newState.isComplete) {
-        _onLevelComplete();
-      }
-      notifyListeners();
+    final tile = _currentLevel!.tileAt(row, col);
+    if (tile.isFixed) return;
+
+    // Rotate the tile
+    final rotatedTile = tile.rotated();
+
+    // Update the grid
+    final newGrid = List.generate(_currentLevel!.rows, (r) {
+      return List.generate(_currentLevel!.cols, (c) {
+        if (r == row && c == col) return rotatedTile;
+        return _currentLevel!.grid[r][c];
+      });
+    });
+
+    _currentLevel = PuzzleLevel(
+      levelNumber: _currentLevel!.levelNumber,
+      rows: _currentLevel!.rows,
+      cols: _currentLevel!.cols,
+      grid: newGrid,
+      solutionRotations: _currentLevel!.solutionRotations,
+    );
+
+    // Recompute connectivity
+    final connected = PuzzleSolver.findConnectedTiles(_currentLevel!);
+    final isSolved = PuzzleSolver.isSolved(_currentLevel!);
+    final moveCount = _gameState!.moveCount + 1;
+
+    _gameState = _gameState!.copyWith(
+      moveCount: moveCount,
+      connectedTiles: connected,
+      isComplete: isSolved,
+    );
+
+    if (isSolved) {
+      _onLevelComplete();
     }
-  }
 
-  /// Follow the arrow at current position.
-  void followArrow() {
-    if (_engine == null || _gameState == null) return;
-
-    final newState = _engine!.moveInArrowDirection(_gameState!);
-    if (newState != _gameState) {
-      _gameState = newState;
-      if (newState.isComplete) {
-        _onLevelComplete();
-      }
-      notifyListeners();
-    }
-  }
-
-  /// Move in a specific direction.
-  void move(Direction direction) {
-    if (_engine == null || _gameState == null) return;
-
-    final newState = _engine!.moveInDirection(_gameState!, direction);
-    if (newState != _gameState) {
-      _gameState = newState;
-      if (newState.isComplete) {
-        _onLevelComplete();
-      }
-      notifyListeners();
-    }
+    notifyListeners();
   }
 
   void _onLevelComplete() {
     if (_currentLevel == null || _gameState == null) return;
 
     final level = _currentLevel!.levelNumber;
-    final stars = _gameState!.lives;
 
-    // Save best stars
+    // Stars based on remaining lives
+    final stars = _gameState!.lives;
     if (stars > (_levelStars[level] ?? 0)) {
       _levelStars[level] = stars;
     }
@@ -126,16 +131,68 @@ class GameProvider extends ChangeNotifier {
     _saveProgress();
   }
 
-  /// Reset current level.
+  /// Reset current level (re-scramble).
   void resetLevel() {
-    if (_engine == null) return;
-    _gameState = _engine!.reset();
-    notifyListeners();
-  }
-
-  /// Restart current level with a new maze.
-  void regenerateLevel() {
     if (_currentLevel == null) return;
     startLevel(_currentLevel!.levelNumber);
+  }
+
+  /// Hint: reveal one tile's correct rotation.
+  void useHint() {
+    if (_currentLevel == null || _gameState == null) return;
+    if (_gameState!.lives <= 0) return;
+    if (_gameState!.isComplete) return;
+
+    // Find a tile that isn't in its solution rotation
+    for (var r = 0; r < _currentLevel!.rows; r++) {
+      for (var c = 0; c < _currentLevel!.cols; c++) {
+        final tile = _currentLevel!.tileAt(r, c);
+        final solutionRot = _currentLevel!.solutionRotations[r][c];
+        if (!tile.isFixed && tile.rotation != solutionRot) {
+          // Set this tile to solution rotation
+          final correctedTile = PuzzleTile(
+            row: r,
+            col: c,
+            type: tile.type,
+            rotation: solutionRot,
+            isFixed: true, // Lock it after hint
+            hasArrow: tile.hasArrow,
+            arrowDirection: tile.arrowDirection,
+            isSource: tile.isSource,
+            isTarget: tile.isTarget,
+          );
+
+          final newGrid = List.generate(_currentLevel!.rows, (gr) {
+            return List.generate(_currentLevel!.cols, (gc) {
+              if (gr == r && gc == c) return correctedTile;
+              return _currentLevel!.grid[gr][gc];
+            });
+          });
+
+          _currentLevel = PuzzleLevel(
+            levelNumber: _currentLevel!.levelNumber,
+            rows: _currentLevel!.rows,
+            cols: _currentLevel!.cols,
+            grid: newGrid,
+            solutionRotations: _currentLevel!.solutionRotations,
+          );
+
+          // Cost: 1 life
+          final connected = PuzzleSolver.findConnectedTiles(_currentLevel!);
+          final isSolved = PuzzleSolver.isSolved(_currentLevel!);
+
+          _gameState = _gameState!.copyWith(
+            lives: _gameState!.lives - 1,
+            connectedTiles: connected,
+            isComplete: isSolved,
+            isGameOver: _gameState!.lives - 1 <= 0 && !isSolved,
+          );
+
+          if (isSolved) _onLevelComplete();
+          notifyListeners();
+          return;
+        }
+      }
+    }
   }
 }

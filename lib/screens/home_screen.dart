@@ -14,7 +14,7 @@ class HomeScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Spacer(flex: 2),
-              // Game icon
+              // Game icon - pipe/connection visual
               Container(
                 width: 120,
                 height: 120,
@@ -29,10 +29,8 @@ class HomeScreen extends StatelessWidget {
                     ),
                   ],
                 ),
-                child: const Icon(
-                  Icons.arrow_forward_rounded,
-                  size: 60,
-                  color: Colors.white,
+                child: CustomPaint(
+                  painter: _LogoPainter(),
                 ),
               ),
               const SizedBox(height: 32),
@@ -48,7 +46,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Follow the arrows, find the path',
+                'Rotate tiles, connect the path',
                 style: TextStyle(
                   fontSize: 16,
                   color: Color(0xFF9E9E9E),
@@ -100,4 +98,72 @@ class HomeScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Draws a simple connected-pipes logo.
+class _LogoPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 8
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final seg = size.width * 0.18;
+
+    // Draw a connected path pattern
+    final path = Path();
+    // Horizontal line
+    path.moveTo(cx - seg * 1.5, cy);
+    path.lineTo(cx + seg * 1.5, cy);
+    // Vertical from center up
+    path.moveTo(cx, cy - seg * 1.5);
+    path.lineTo(cx, cy);
+    // Corner piece going right then down
+    path.moveTo(cx + seg * 1.5, cy);
+    path.lineTo(cx + seg * 1.5, cy + seg * 1.2);
+    // Vertical left side
+    path.moveTo(cx - seg * 1.5, cy);
+    path.lineTo(cx - seg * 1.5, cy - seg * 1.2);
+
+    canvas.drawPath(path, paint);
+
+    // Draw nodes at junctions
+    final nodePaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(Offset(cx, cy), 5, nodePaint);
+    canvas.drawCircle(Offset(cx - seg * 1.5, cy), 4, nodePaint);
+    canvas.drawCircle(Offset(cx + seg * 1.5, cy), 4, nodePaint);
+
+    // Arrow indicator
+    final arrowPaint = Paint()
+      ..color = const Color(0xFFFF6B8A)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    // Small arrow pointing right near center
+    canvas.drawLine(
+      Offset(cx + 5, cy - seg * 1.2),
+      Offset(cx + seg, cy - seg * 1.2),
+      arrowPaint,
+    );
+    canvas.drawLine(
+      Offset(cx + seg, cy - seg * 1.2),
+      Offset(cx + seg - 6, cy - seg * 1.2 - 5),
+      arrowPaint,
+    );
+    canvas.drawLine(
+      Offset(cx + seg, cy - seg * 1.2),
+      Offset(cx + seg - 6, cy - seg * 1.2 + 5),
+      arrowPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

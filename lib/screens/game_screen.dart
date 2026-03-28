@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
 import '../widgets/hearts_display.dart';
-import '../widgets/maze_grid_widget.dart';
+import '../widgets/puzzle_grid_widget.dart';
 
 class GameScreen extends StatelessWidget {
   const GameScreen({super.key});
@@ -27,39 +27,45 @@ class GameScreen extends StatelessWidget {
                   levelNumber: level.levelNumber,
                   lives: state.lives,
                   maxLives: state.maxLives,
+                  moveCount: state.moveCount,
                   onBack: () => Navigator.pop(context),
                   onReset: () => provider.resetLevel(),
                 ),
                 const Divider(height: 1, color: Color(0xFFE8E5F0)),
-                // Maze
-                Expanded(
-                  child: GestureDetector(
-                    onVerticalDragEnd: (details) {
-                      // Swipe support: follow the current arrow direction
-                      provider.followArrow();
-                    },
-                    onHorizontalDragEnd: (details) {
-                      provider.followArrow();
-                    },
-                    child: const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: MazeGridWidget(),
-                    ),
+                // Puzzle grid
+                const Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.all(12),
+                    child: PuzzleGridWidget(),
                   ),
                 ),
-                // Bottom action bar
+                // Bottom bar with hint button
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-                  child: _FollowArrowButton(
-                    onPressed: state.isComplete || state.isGameOver
-                        ? null
-                        : () => provider.followArrow(),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Tap tiles to rotate',
+                          style: TextStyle(
+                            color: const Color(0xFF9E9E9E),
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      _HintButton(
+                        lives: state.lives,
+                        enabled: !state.isComplete && !state.isGameOver,
+                        onPressed: () => provider.useHint(),
+                      ),
+                    ],
                   ),
                 ),
-                // Completion / Game Over overlays
+                // Completion overlay
                 if (state.isComplete)
                   _CompletionBanner(
                     lives: state.lives,
+                    moveCount: state.moveCount,
                     onNext: () {
                       final nextLevel = level.levelNumber + 1;
                       if (nextLevel <= GameProvider.totalLevels) {
@@ -88,6 +94,7 @@ class _GameHeader extends StatelessWidget {
   final int levelNumber;
   final int lives;
   final int maxLives;
+  final int moveCount;
   final VoidCallback onBack;
   final VoidCallback onReset;
 
@@ -95,6 +102,7 @@ class _GameHeader extends StatelessWidget {
     required this.levelNumber,
     required this.lives,
     required this.maxLives,
+    required this.moveCount,
     required this.onBack,
     required this.onReset,
   });
@@ -105,30 +113,30 @@ class _GameHeader extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: Row(
         children: [
-          // Back button
           IconButton(
             icon: const Icon(Icons.arrow_back_ios,
                 color: Color(0xFF9E9EAF), size: 22),
             onPressed: onBack,
           ),
-          // Reset button
           IconButton(
             icon: const Icon(Icons.refresh,
                 color: Color(0xFF9E9EAF), size: 24),
             onPressed: onReset,
           ),
           const Spacer(),
-          // Level label
-          Text(
-            'Level $levelNumber',
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF6C63FF),
-            ),
+          Column(
+            children: [
+              Text(
+                'Level $levelNumber',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF6C63FF),
+                ),
+              ),
+            ],
           ),
           const Spacer(),
-          // Hearts
           HeartsDisplay(currentLives: lives, maxLives: maxLives),
           const SizedBox(width: 8),
         ],
@@ -137,33 +145,57 @@ class _GameHeader extends StatelessWidget {
   }
 }
 
-class _FollowArrowButton extends StatelessWidget {
-  final VoidCallback? onPressed;
+class _HintButton extends StatelessWidget {
+  final int lives;
+  final bool enabled;
+  final VoidCallback onPressed;
 
-  const _FollowArrowButton({this.onPressed});
+  const _HintButton({
+    required this.lives,
+    required this.enabled,
+    required this.onPressed,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: 50,
-      child: ElevatedButton(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF6C63FF),
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(25),
+    final canUse = enabled && lives > 0;
+    return GestureDetector(
+      onTap: canUse ? onPressed : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: canUse
+              ? const Color(0xFFFF9800).withOpacity(0.1)
+              : const Color(0xFFF5F5F5),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: canUse
+                ? const Color(0xFFFF9800).withOpacity(0.3)
+                : const Color(0xFFE0E0E0),
           ),
-          elevation: 4,
         ),
-        child: const Text(
-          'Follow Arrow',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 1,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.lightbulb_outline,
+              size: 18,
+              color: canUse
+                  ? const Color(0xFFFF9800)
+                  : const Color(0xFFBDBDBD),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              'Hint',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: canUse
+                    ? const Color(0xFFFF9800)
+                    : const Color(0xFFBDBDBD),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -172,11 +204,13 @@ class _FollowArrowButton extends StatelessWidget {
 
 class _CompletionBanner extends StatelessWidget {
   final int lives;
+  final int moveCount;
   final VoidCallback onNext;
   final VoidCallback onMenu;
 
   const _CompletionBanner({
     required this.lives,
+    required this.moveCount,
     required this.onNext,
     required this.onMenu,
   });
@@ -207,6 +241,11 @@ class _CompletionBanner extends StatelessWidget {
               fontWeight: FontWeight.bold,
               color: Color(0xFF4CAF50),
             ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Moves: $moveCount',
+            style: const TextStyle(color: Color(0xFF9E9E9E)),
           ),
           const SizedBox(height: 12),
           HeartsDisplay(currentLives: lives),
@@ -282,7 +321,7 @@ class _GameOverBanner extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'No lives remaining',
+            'No hints remaining',
             style: TextStyle(color: Color(0xFF9E9E9E)),
           ),
           const SizedBox(height: 20),
