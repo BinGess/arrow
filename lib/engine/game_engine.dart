@@ -18,27 +18,35 @@ class GameEngine {
 
   /// Handle the player tapping an arrow.
   ///
-  /// Returns (newState, tapResult, hitArrow).
-  /// - If the arrow's flight path is clear → remove it (success).
-  /// - If the path hits another arrow → lose a life (collision).
+  /// The arrow flies in its direction. Its flight path (cells ahead of head)
+  /// is checked against ALL occupied cells of OTHER remaining arrows
+  /// (including their tail cells). If any overlap → collision.
   (GameState, TapResult, Arrow?) tapArrow(GameState state, int arrowId) {
-    if (state.isComplete || state.isGameOver) return (state, TapResult.collision, null);
+    if (state.isComplete || state.isGameOver) {
+      return (state, TapResult.collision, null);
+    }
 
     // Find the tapped arrow
-    final arrow = state.remainingArrows.where((a) => a.id == arrowId).firstOrNull;
+    final arrow =
+        state.remainingArrows.where((a) => a.id == arrowId).firstOrNull;
     if (arrow == null) return (state, TapResult.collision, null);
 
-    // Get its flight path
-    final path = arrow.flightPath(rows, cols);
+    // Get cells occupied by OTHER arrows (not the one being tapped)
+    final otherOccupied = <(int, int)>{};
+    for (final a in state.remainingArrows) {
+      if (a.id == arrowId) continue;
+      otherOccupied.addAll(a.occupiedCells);
+    }
 
-    // Check for collisions with remaining arrows (excluding self)
-    final occupied = state.occupiedCells;
+    // Check the flight path for collisions
+    final path = arrow.flightPath(rows, cols);
     Arrow? hitTarget;
     for (final cell in path) {
-      if (cell == (arrow.row, arrow.col)) continue;
-      if (occupied.contains(cell)) {
-        hitTarget = state.arrowAt(cell.$1, cell.$2);
-        break;
+      if (otherOccupied.contains(cell)) {
+        // Find which arrow was hit
+        hitTarget = state.arrowOccupyingCell(cell.$1, cell.$2);
+        if (hitTarget != null && hitTarget.id != arrowId) break;
+        hitTarget = null;
       }
     }
 
@@ -58,9 +66,8 @@ class GameEngine {
     }
 
     // Success - remove the arrow
-    final newRemaining = state.remainingArrows
-        .where((a) => a.id != arrowId)
-        .toList();
+    final newRemaining =
+        state.remainingArrows.where((a) => a.id != arrowId).toList();
     final newRemoved = [...state.removedOrder, arrowId];
     final isComplete = newRemaining.isEmpty;
 

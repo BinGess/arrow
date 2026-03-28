@@ -5,7 +5,7 @@ import '../models/arrow.dart';
 import '../models/game_state.dart';
 import '../providers/game_provider.dart';
 
-/// Renders the entire arrow puzzle board with all arrows and animations.
+/// Renders the entire arrow puzzle board with arrows, tails, and animations.
 class ArrowBoardWidget extends StatelessWidget {
   const ArrowBoardWidget({super.key});
 
@@ -36,31 +36,28 @@ class ArrowBoardWidget extends StatelessWidget {
                 child: Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    // Grid background lines
+                    // Grid background
                     CustomPaint(
                       size: Size(gridW, gridH),
                       painter: _GridPainter(rows: rows, cols: cols),
                     ),
-                    // Remaining arrows
+                    // All arrows with tails (rendered as one custom paint layer)
+                    CustomPaint(
+                      size: Size(gridW, gridH),
+                      painter: _ArrowsPainter(
+                        arrows: state.remainingArrows,
+                        cellSize: cellSize,
+                        collisionId: state.lastCollisionId,
+                        hitId: state.hitArrowId,
+                      ),
+                    ),
+                    // Tap targets for each arrow (invisible, just for hit detection)
                     ...state.remainingArrows.map((arrow) {
-                      final isCollision =
-                          arrow.id == state.lastCollisionId;
-                      final isHit = arrow.id == state.hitArrowId;
-
-                      return Positioned(
-                        left: arrow.col * cellSize,
-                        top: arrow.row * cellSize,
-                        width: cellSize,
-                        height: cellSize,
-                        child: _ArrowWidget(
-                          arrow: arrow,
-                          cellSize: cellSize,
-                          isCollision: isCollision,
-                          isHit: isHit,
-                          onTap: provider.isAnimating
-                              ? null
-                              : () => provider.tapArrow(arrow.id),
-                        ),
+                      return _ArrowTapTarget(
+                        arrow: arrow,
+                        cellSize: cellSize,
+                        enabled: !provider.isAnimating,
+                        onTap: () => provider.tapArrow(arrow.id),
                       );
                     }),
                     // Flying arrow animation
@@ -83,7 +80,7 @@ class ArrowBoardWidget extends StatelessWidget {
   }
 }
 
-/// Draws subtle grid lines.
+/// Subtle grid lines.
 class _GridPainter extends CustomPainter {
   final int rows;
   final int cols;
@@ -93,7 +90,7 @@ class _GridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = const Color(0xFFEEEEEE)
+      ..color = const Color(0xFFF0F0F0)
       ..strokeWidth = 0.5;
 
     final cellW = size.width / cols;
@@ -101,17 +98,11 @@ class _GridPainter extends CustomPainter {
 
     for (var i = 0; i <= cols; i++) {
       canvas.drawLine(
-        Offset(i * cellW, 0),
-        Offset(i * cellW, size.height),
-        paint,
-      );
+          Offset(i * cellW, 0), Offset(i * cellW, size.height), paint);
     }
     for (var i = 0; i <= rows; i++) {
       canvas.drawLine(
-        Offset(0, i * cellH),
-        Offset(size.width, i * cellH),
-        paint,
-      );
+          Offset(0, i * cellH), Offset(size.width, i * cellH), paint);
     }
   }
 
@@ -119,91 +110,106 @@ class _GridPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-/// A single arrow on the board.
-class _ArrowWidget extends StatelessWidget {
-  final Arrow arrow;
+/// Paints all arrows and their tails in a single paint call for performance.
+class _ArrowsPainter extends CustomPainter {
+  final List<Arrow> arrows;
   final double cellSize;
-  final bool isCollision;
-  final bool isHit;
-  final VoidCallback? onTap;
+  final int? collisionId;
+  final int? hitId;
 
-  const _ArrowWidget({
-    required this.arrow,
+  _ArrowsPainter({
+    required this.arrows,
     required this.cellSize,
-    this.isCollision = false,
-    this.isHit = false,
-    this.onTap,
+    this.collisionId,
+    this.hitId,
   });
 
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        decoration: BoxDecoration(
-          color: isCollision
-              ? const Color(0xFFFF6B8A).withOpacity(0.2)
-              : isHit
-                  ? const Color(0xFFFF6B8A).withOpacity(0.15)
-                  : Colors.transparent,
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: CustomPaint(
-          painter: _ArrowPainter(
-            direction: arrow.direction,
-            color: isCollision || isHit
-                ? const Color(0xFFFF6B8A)
-                : const Color(0xFF2D2D3A),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Paints a directional arrow.
-class _ArrowPainter extends CustomPainter {
-  final Direction direction;
-  final Color color;
-
-  _ArrowPainter({required this.direction, required this.color});
-
-  @override
   void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final length = math.min(size.width, size.height) * 0.32;
-    final headLen = length * 0.45;
-    final strokeWidth = math.min(size.width, size.height) * 0.07;
+    for (final arrow in arrows) {
+      final isCollision = arrow.id == collisionId;
+      final isHit = arrow.id == hitId;
+      final color = (isCollision || isHit)
+          ? const Color(0xFFFF6B8A)
+          : const Color(0xFF2D2D3A);
+
+      // Draw tail first (behind the arrowhead)
+      if (arrow.hasTail) {
+        _drawTail(canvas, arrow, color);
+      }
+
+      // Draw arrowhead
+      _drawArrowHead(canvas, arrow, color);
+    }
+  }
+
+  void _drawTail(Canvas canvas, Arrow arrow, Color color) {
+    final strokeWidth = (cellSize * 0.08).clamp(2.0, 5.0);
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    // Build the tail path: head center → through each tail cell center
+    final headCenter = _cellCenter(arrow.row, arrow.col);
+    final path = Path()..moveTo(headCenter.dx, headCenter.dy);
+
+    var r = arrow.row;
+    var c = arrow.col;
+    for (final seg in arrow.tailSegments) {
+      for (var i = 0; i < seg.length; i++) {
+        r += seg.direction.dr;
+        c += seg.direction.dc;
+        final center = _cellCenter(r, c);
+        path.lineTo(center.dx, center.dy);
+      }
+    }
+
+    canvas.drawPath(path, paint);
+
+    // Draw a small end cap at the tail tip
+    final tipCenter = _cellCenter(r, c);
+    final capPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(tipCenter, strokeWidth * 0.8, capPaint);
+  }
+
+  void _drawArrowHead(Canvas canvas, Arrow arrow, Color color) {
+    final center = _cellCenter(arrow.row, arrow.col);
+    final arrowSize = cellSize * 0.32;
+    final headLen = arrowSize * 0.45;
+    final strokeWidth = (cellSize * 0.08).clamp(2.0, 4.5);
 
     final paint = Paint()
       ..color = color
-      ..strokeWidth = strokeWidth.clamp(2.0, 4.0)
+      ..strokeWidth = strokeWidth
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
 
     double angle;
-    switch (direction) {
+    switch (arrow.direction) {
       case Direction.up:    angle = -math.pi / 2; break;
       case Direction.down:  angle = math.pi / 2; break;
       case Direction.left:  angle = math.pi; break;
       case Direction.right: angle = 0; break;
     }
 
-    // Shaft
+    // Shaft from center backward to center forward
     final tail = Offset(
-      center.dx - length * math.cos(angle),
-      center.dy - length * math.sin(angle),
+      center.dx - arrowSize * math.cos(angle),
+      center.dy - arrowSize * math.sin(angle),
     );
     final tip = Offset(
-      center.dx + length * math.cos(angle),
-      center.dy + length * math.sin(angle),
+      center.dx + arrowSize * math.cos(angle),
+      center.dy + arrowSize * math.sin(angle),
     );
     canvas.drawLine(tail, tip, paint);
 
-    // Arrowhead
+    // Arrowhead chevron
     final h1 = Offset(
       tip.dx + headLen * math.cos(angle + math.pi * 0.8),
       tip.dy + headLen * math.sin(angle + math.pi * 0.8),
@@ -216,12 +222,54 @@ class _ArrowPainter extends CustomPainter {
     canvas.drawLine(tip, h2, paint);
   }
 
+  Offset _cellCenter(int row, int col) {
+    return Offset(
+      col * cellSize + cellSize / 2,
+      row * cellSize + cellSize / 2,
+    );
+  }
+
   @override
-  bool shouldRepaint(covariant _ArrowPainter oldDelegate) =>
-      oldDelegate.color != color || oldDelegate.direction != direction;
+  bool shouldRepaint(covariant _ArrowsPainter oldDelegate) => true;
 }
 
-/// Animated arrow that flies off the board.
+/// Invisible tap targets covering all of the arrow's cells (head + tail).
+class _ArrowTapTarget extends StatelessWidget {
+  final Arrow arrow;
+  final double cellSize;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _ArrowTapTarget({
+    required this.arrow,
+    required this.cellSize,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Create a tap target for each occupied cell
+    final cells = arrow.occupiedCells;
+    return Stack(
+      children: cells.map((cell) {
+        return Positioned(
+          left: cell.$2 * cellSize,
+          top: cell.$1 * cellSize,
+          width: cellSize,
+          height: cellSize,
+          child: GestureDetector(
+            onTap: enabled ? onTap : null,
+            behavior: HitTestBehavior.opaque,
+            child: const SizedBox.expand(),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+/// Animated arrow that flies off the board with its tail.
 class _FlyingArrowWidget extends StatefulWidget {
   final Arrow arrow;
   final double cellSize;
@@ -242,8 +290,7 @@ class _FlyingArrowWidget extends StatefulWidget {
 class _FlyingArrowWidgetState extends State<_FlyingArrowWidget>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
-  late Animation<Offset> _positionAnimation;
-  late Animation<double> _opacityAnimation;
+  late Animation<double> _flyAnimation;
 
   @override
   void initState() {
@@ -253,37 +300,15 @@ class _FlyingArrowWidgetState extends State<_FlyingArrowWidget>
       vsync: this,
     );
 
-    final startX = widget.arrow.col * widget.cellSize;
-    final startY = widget.arrow.row * widget.cellSize;
+    // Fly distance: enough to go off screen
+    final maxDist = math.max(
+          widget.gridRows * widget.cellSize,
+          widget.gridCols * widget.cellSize,
+        ) *
+        1.5;
 
-    // Calculate end position (off screen)
-    double endX = startX;
-    double endY = startY;
-    final flyDist = math.max(
-      widget.gridRows * widget.cellSize,
-      widget.gridCols * widget.cellSize,
-    ) * 1.5;
-
-    switch (widget.arrow.direction) {
-      case Direction.up:    endY = startY - flyDist; break;
-      case Direction.down:  endY = startY + flyDist; break;
-      case Direction.left:  endX = startX - flyDist; break;
-      case Direction.right: endX = startX + flyDist; break;
-    }
-
-    _positionAnimation = Tween<Offset>(
-      begin: Offset(startX, startY),
-      end: Offset(endX, endY),
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeIn,
-    ));
-
-    _opacityAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.5, 1.0),
-      ),
+    _flyAnimation = Tween<double>(begin: 0, end: maxDist).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeIn),
     );
 
     _controller.forward();
@@ -300,22 +325,128 @@ class _FlyingArrowWidgetState extends State<_FlyingArrowWidget>
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
-        return Positioned(
-          left: _positionAnimation.value.dx,
-          top: _positionAnimation.value.dy,
-          width: widget.cellSize,
-          height: widget.cellSize,
-          child: Opacity(
-            opacity: _opacityAnimation.value,
-            child: CustomPaint(
-              painter: _ArrowPainter(
-                direction: widget.arrow.direction,
-                color: const Color(0xFF6C63FF),
-              ),
-            ),
+        final offset = _flyAnimation.value;
+        final dx = widget.arrow.direction.dc * offset;
+        final dy = widget.arrow.direction.dr * offset;
+
+        return CustomPaint(
+          size: Size(
+            widget.gridCols * widget.cellSize,
+            widget.gridRows * widget.cellSize,
+          ),
+          painter: _FlyingArrowPainter(
+            arrow: widget.arrow,
+            cellSize: widget.cellSize,
+            offsetDx: dx,
+            offsetDy: dy,
+            opacity: (1.0 - _controller.value).clamp(0.0, 1.0),
           ),
         );
       },
     );
   }
+}
+
+/// Paints the flying arrow (head + tail) at an offset.
+class _FlyingArrowPainter extends CustomPainter {
+  final Arrow arrow;
+  final double cellSize;
+  final double offsetDx;
+  final double offsetDy;
+  final double opacity;
+
+  _FlyingArrowPainter({
+    required this.arrow,
+    required this.cellSize,
+    required this.offsetDx,
+    required this.offsetDy,
+    required this.opacity,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final color = const Color(0xFF6C63FF).withOpacity(opacity);
+    final strokeWidth = (cellSize * 0.08).clamp(2.0, 4.5);
+
+    canvas.save();
+    canvas.translate(offsetDx, offsetDy);
+
+    // Draw tail
+    if (arrow.hasTail) {
+      final tailPaint = Paint()
+        ..color = color
+        ..strokeWidth = strokeWidth
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round;
+
+      final headCenter = _cellCenter(arrow.row, arrow.col);
+      final path = Path()..moveTo(headCenter.dx, headCenter.dy);
+
+      var r = arrow.row;
+      var c = arrow.col;
+      for (final seg in arrow.tailSegments) {
+        for (var i = 0; i < seg.length; i++) {
+          r += seg.direction.dr;
+          c += seg.direction.dc;
+          final center = _cellCenter(r, c);
+          path.lineTo(center.dx, center.dy);
+        }
+      }
+      canvas.drawPath(path, tailPaint);
+    }
+
+    // Draw arrowhead
+    final center = _cellCenter(arrow.row, arrow.col);
+    final arrowSize = cellSize * 0.32;
+    final headLen = arrowSize * 0.45;
+
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    double angle;
+    switch (arrow.direction) {
+      case Direction.up:    angle = -math.pi / 2; break;
+      case Direction.down:  angle = math.pi / 2; break;
+      case Direction.left:  angle = math.pi; break;
+      case Direction.right: angle = 0; break;
+    }
+
+    final tail = Offset(
+      center.dx - arrowSize * math.cos(angle),
+      center.dy - arrowSize * math.sin(angle),
+    );
+    final tip = Offset(
+      center.dx + arrowSize * math.cos(angle),
+      center.dy + arrowSize * math.sin(angle),
+    );
+    canvas.drawLine(tail, tip, paint);
+
+    final h1 = Offset(
+      tip.dx + headLen * math.cos(angle + math.pi * 0.8),
+      tip.dy + headLen * math.sin(angle + math.pi * 0.8),
+    );
+    final h2 = Offset(
+      tip.dx + headLen * math.cos(angle - math.pi * 0.8),
+      tip.dy + headLen * math.sin(angle - math.pi * 0.8),
+    );
+    canvas.drawLine(tip, h1, paint);
+    canvas.drawLine(tip, h2, paint);
+
+    canvas.restore();
+  }
+
+  Offset _cellCenter(int row, int col) {
+    return Offset(
+      col * cellSize + cellSize / 2,
+      row * cellSize + cellSize / 2,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _FlyingArrowPainter oldDelegate) => true;
 }

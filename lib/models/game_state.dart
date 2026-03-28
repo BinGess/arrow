@@ -19,7 +19,7 @@ class GameState {
   /// IDs of arrows successfully removed (in order).
   final List<int> removedOrder;
 
-  /// ID of the arrow that just collided (for animation), or null.
+  /// ID of the arrow that just had a collision (for animation), or null.
   final int? lastCollisionId;
 
   /// ID of the arrow that was hit during collision, or null.
@@ -54,22 +54,28 @@ class GameState {
       maxLives: maxLives,
       remainingArrows: remainingArrows ?? this.remainingArrows,
       removedOrder: removedOrder ?? this.removedOrder,
-      lastCollisionId: clearCollision ? null : (lastCollisionId ?? this.lastCollisionId),
+      lastCollisionId:
+          clearCollision ? null : (lastCollisionId ?? this.lastCollisionId),
       hitArrowId: clearCollision ? null : (hitArrowId ?? this.hitArrowId),
       isComplete: isComplete ?? this.isComplete,
       isGameOver: isGameOver ?? this.isGameOver,
     );
   }
 
-  /// Check if a cell is occupied by a remaining arrow.
-  Arrow? arrowAt(int row, int col) {
+  /// Set of all cells occupied by remaining arrows (heads + tails).
+  Set<(int, int)> get occupiedCells {
+    final cells = <(int, int)>{};
     for (final a in remainingArrows) {
-      if (a.row == row && a.col == col) return a;
+      cells.addAll(a.occupiedCells);
+    }
+    return cells;
+  }
+
+  /// Find which arrow occupies a given cell (head or tail).
+  Arrow? arrowOccupyingCell(int row, int col) {
+    for (final a in remainingArrows) {
+      if (a.occupiedCells.contains((row, col))) return a;
     }
     return null;
   }
-
-  /// Set of occupied cells for quick lookup.
-  Set<(int, int)> get occupiedCells =>
-      remainingArrows.map((a) => (a.row, a.col)).toSet();
 }
