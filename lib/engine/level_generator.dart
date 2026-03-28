@@ -22,66 +22,67 @@ class LevelGenerator {
 
   LevelGenerator({int? seed}) : _baseSeed = seed;
 
+  /// Continuous difficulty interpolation.
+  ///
+  /// Every single level is unique — no two adjacent levels share the same
+  /// config. Parameters are linearly interpolated from Level 1 → Level 50.
+  ///
+  /// Key insight: maxTail is kept moderate (3→7) so arrows don't hog too
+  /// many cells. Instead, difficulty comes from:
+  ///   - More arrows (denser board)
+  ///   - Higher tailChance (% of arrows that have tails at all)
+  ///   - Higher lTailChance (% of tailed arrows that are L-shaped)
+  ///   - Deeper required chain depth
+  ///   - Fewer lives
   static ({
     int rows,
     int cols,
     int count,
     int maxTail,
-    bool lTails,
-    double lTailChance,
+    double tailChance,  // probability an arrow gets a tail (vs head-only)
+    double lTailChance, // probability a tailed arrow is L-shaped
     int minDepth,
     int lives,
   }) configForLevel(int level) {
-    // Aggressive difficulty curve.
-    // Level 1 matches reference screenshot (~55 arrows, 14x11).
-    // Level 50 is a massive 24x18 grid with 160 arrows, near-all L-tails,
-    // very long tails, deep chains, and only 1 life.
-    //
-    // Key scaling dimensions:
-    //   Grid:       14x11 → 24x18  (154 → 432 cells, ~2.8x)
-    //   Arrows:     55 → 160       (~2.9x)
-    //   Max tail:   4 → 12         (3x)
-    //   L-tail %:   50% → 90%
-    //   Min depth:  4 → 18
-    //   Lives:      5 → 1
-    if (level <= 1) {
-      return (rows: 14, cols: 11, count: 55, maxTail: 4, lTails: true, lTailChance: 0.50, minDepth: 4, lives: 5);
-    }
-    if (level <= 3) {
-      return (rows: 14, cols: 11, count: 60, maxTail: 5, lTails: true, lTailChance: 0.55, minDepth: 5, lives: 5);
-    }
-    if (level <= 5) {
-      return (rows: 15, cols: 12, count: 68, maxTail: 5, lTails: true, lTailChance: 0.55, minDepth: 6, lives: 5);
-    }
-    if (level <= 8) {
-      return (rows: 16, cols: 12, count: 75, maxTail: 6, lTails: true, lTailChance: 0.60, minDepth: 7, lives: 4);
-    }
-    if (level <= 12) {
-      return (rows: 16, cols: 13, count: 82, maxTail: 6, lTails: true, lTailChance: 0.65, minDepth: 8, lives: 4);
-    }
-    if (level <= 16) {
-      return (rows: 18, cols: 14, count: 92, maxTail: 7, lTails: true, lTailChance: 0.70, minDepth: 9, lives: 4);
-    }
-    if (level <= 20) {
-      return (rows: 18, cols: 14, count: 100, maxTail: 7, lTails: true, lTailChance: 0.70, minDepth: 10, lives: 3);
-    }
-    if (level <= 25) {
-      return (rows: 20, cols: 15, count: 110, maxTail: 8, lTails: true, lTailChance: 0.75, minDepth: 12, lives: 3);
-    }
-    if (level <= 30) {
-      return (rows: 20, cols: 16, count: 120, maxTail: 9, lTails: true, lTailChance: 0.80, minDepth: 13, lives: 3);
-    }
-    if (level <= 35) {
-      return (rows: 22, cols: 16, count: 130, maxTail: 9, lTails: true, lTailChance: 0.80, minDepth: 14, lives: 2);
-    }
-    if (level <= 40) {
-      return (rows: 22, cols: 17, count: 140, maxTail: 10, lTails: true, lTailChance: 0.85, minDepth: 15, lives: 2);
-    }
-    if (level <= 45) {
-      return (rows: 24, cols: 17, count: 150, maxTail: 11, lTails: true, lTailChance: 0.85, minDepth: 16, lives: 2);
-    }
-    // Level 46-50: extreme difficulty
-    return (rows: 24, cols: 18, count: 160, maxTail: 12, lTails: true, lTailChance: 0.90, minDepth: 18, lives: 1);
+    final t = ((level - 1) / 49.0).clamp(0.0, 1.0);
+
+    // Grid size: 14x11 → 24x18
+    final rows = (14 + t * 10).round();
+    final cols = (11 + t * 7).round();
+
+    // Arrow count: 50 → 180
+    // With moderate tails + head-only mix, the board can actually fit these.
+    // Head-only arrows occupy 1 cell; avg tailed arrow ~3-4 cells.
+    // At t=1: 432 cells, ~60% tailed with avg 4 cells + ~40% head-only:
+    //   180 * 0.6 * 4 + 180 * 0.4 * 1 = 432 + 72 = 504 → generator stops
+    //   when board is full, so actual count will be ~130-150. That's fine.
+    final count = (50 + t * 130).round();
+
+    // Max tail length: 3 → 7 (moderate — don't hog too many cells)
+    final maxTail = (3 + t * 4).round();
+
+    // Tail chance: 0.45 → 0.92 (early levels have many head-only arrows)
+    final tailChance = 0.45 + t * 0.47;
+
+    // L-tail chance: 0.35 → 0.88
+    final lTailChance = 0.35 + t * 0.53;
+
+    // Min chain depth: 3 → 15
+    final minDepth = (3 + t * 12).round();
+
+    // Lives: 5 → 1
+    final lives = (5 - t * 4).round().clamp(1, 5);
+
+    return (
+      rows: rows,
+      cols: cols,
+      count: count,
+      maxTail: maxTail,
+      tailChance: tailChance,
+      lTailChance: lTailChance,
+      minDepth: minDepth,
+      lives: lives,
+    );
   }
 
   /// Generate a validated, solvable level.
@@ -96,9 +97,13 @@ class LevelGenerator {
       final seed = _baseSeed ?? (levelNumber * 1000 + attempt * 7 + 42);
       final random = Random(seed + attempt);
       final result = _generateLevel(
-        config.rows, config.cols, config.count,
-        config.maxTail, config.lTails, config.lTailChance, config.minDepth,
-        random,
+        rows: config.rows,
+        cols: config.cols,
+        targetCount: config.count,
+        maxTail: config.maxTail,
+        tailChance: config.tailChance,
+        lTailChance: config.lTailChance,
+        random: random,
       );
 
       // Validate solvability
@@ -124,48 +129,68 @@ class LevelGenerator {
     return (arrows: fallback.arrows, rows: fallback.rows, cols: fallback.cols, lives: config.lives);
   }
 
-  ({List<Arrow> arrows, int rows, int cols}) _generateLevel(
-    int rows, int cols, int targetCount,
-    int maxTail, bool allowLTails, double lTailChance, int minDepth,
-    Random random,
-  ) {
+  ({List<Arrow> arrows, int rows, int cols}) _generateLevel({
+    required int rows,
+    required int cols,
+    required int targetCount,
+    required int maxTail,
+    required double tailChance,
+    required double lTailChance,
+    required Random random,
+  }) {
     final placed = <Arrow>[]; // Placement order (reverse of solution)
     final occupied = <(int, int)>{};
     var nextId = 0;
 
     for (var i = 0; i < targetCount; i++) {
-      // Earlier placements (removed last) get longer tails to block more.
       final progress = i / targetCount;
-      // Guarantee a minimum tail length for most arrows
-      final tailBudget = maxTail > 0
-          ? max(1, (maxTail * (1.0 - progress * 0.5)).round())
-          : 0;
-      // Higher minimum tail: at least 1 for early arrows, scaling down
-      final minTail = maxTail > 0 ? max(0, (tailBudget * 0.5).round()) : 0;
-      final tailLen = tailBudget > 0
-          ? minTail + random.nextInt(tailBudget - minTail + 1)
-          : 0;
-      final useLTail = allowLTails && tailLen >= 2 &&
-          random.nextDouble() < lTailChance;
+
+      // Decide: does this arrow get a tail?
+      // Early-placed arrows (removed last) are more likely to have tails
+      // because they serve as blockers. Late-placed arrows can be head-only.
+      final hasTail = random.nextDouble() < tailChance * (1.0 - progress * 0.3);
+
+      int tailLen;
+      if (!hasTail || maxTail == 0) {
+        tailLen = 0;
+      } else {
+        // Tail length: 1 to maxTail, biased longer for early placements
+        final budget = max(1, (maxTail * (1.0 - progress * 0.4)).round());
+        tailLen = 1 + random.nextInt(budget);
+      }
+
+      final useLTail = tailLen >= 2 && random.nextDouble() < lTailChance;
 
       final arrow = _placeBestArrow(
         rows, cols, occupied, placed, nextId, tailLen, useLTail, random,
       );
 
       if (arrow == null) {
-        // Try without tail
-        if (tailLen > 0) {
-          final fallback = _placeBestArrow(
-            rows, cols, occupied, placed, nextId, 0, false, random,
+        // Try shorter tail
+        if (tailLen > 1) {
+          final shorter = _placeBestArrow(
+            rows, cols, occupied, placed, nextId, 1, false, random,
           );
-          if (fallback != null) {
-            placed.add(fallback);
-            occupied.addAll(fallback.occupiedCells);
+          if (shorter != null) {
+            placed.add(shorter);
+            occupied.addAll(shorter.occupiedCells);
             nextId++;
             continue;
           }
         }
-        break; // Board is full
+        // Try head-only
+        if (tailLen > 0) {
+          final headOnly = _placeBestArrow(
+            rows, cols, occupied, placed, nextId, 0, false, random,
+          );
+          if (headOnly != null) {
+            placed.add(headOnly);
+            occupied.addAll(headOnly.occupiedCells);
+            nextId++;
+            continue;
+          }
+        }
+        break; // Board is truly full
       }
 
       placed.add(arrow);
