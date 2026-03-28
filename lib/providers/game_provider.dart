@@ -62,14 +62,17 @@ class GameProvider extends ChangeNotifier {
 
   int starsForLevel(int level) => _levelStars[level] ?? 0;
 
+  int _currentLives = 5;
+
   void startLevel(int levelNumber) {
     _currentLevelNumber = levelNumber;
     final result = _generator.generate(levelNumber);
     _gridRows = result.rows;
     _gridCols = result.cols;
+    _currentLives = result.lives;
     _originalArrows = List.of(result.arrows);
     _engine = GameEngine(rows: _gridRows, cols: _gridCols);
-    _gameState = _engine!.createInitialState(result.arrows);
+    _gameState = _engine!.createInitialState(result.arrows, lives: _currentLives);
     _flyingArrows.clear();
     notifyListeners();
   }
@@ -133,7 +136,7 @@ class GameProvider extends ChangeNotifier {
 
   void resetLevel() {
     if (_engine == null) return;
-    _gameState = _engine!.createInitialState(_originalArrows);
+    _gameState = _engine!.createInitialState(_originalArrows, lives: _currentLives);
     _flyingArrows.clear();
     notifyListeners();
   }

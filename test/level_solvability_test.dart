@@ -45,11 +45,9 @@ void main() {
         expect(metrics.isSolvable, true,
             reason: 'Level $level is not solvable');
 
-        if (level >= 10) {
-          expect(metrics.maxChainDepth >= 2, true,
-              reason: 'Level $level chain depth too shallow: '
-                  '${metrics.maxChainDepth}');
-        }
+        expect(metrics.maxChainDepth >= 2, true,
+            reason: 'Level $level chain depth too shallow: '
+                '${metrics.maxChainDepth}');
       });
     });
 

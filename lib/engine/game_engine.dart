@@ -9,9 +9,10 @@ class GameEngine {
   GameEngine({required this.rows, required this.cols});
 
   /// Create initial game state from a list of arrows.
-  GameState createInitialState(List<Arrow> arrows) {
+  GameState createInitialState(List<Arrow> arrows, {int lives = 5}) {
     return GameState(
-      lives: 5,
+      lives: lives,
+      maxLives: lives,
       remainingArrows: List.unmodifiable(arrows),
     );
   }

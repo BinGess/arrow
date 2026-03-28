@@ -28,49 +28,67 @@ class LevelGenerator {
     int count,
     int maxTail,
     bool lTails,
-    double lTailChance, // probability of L-shaped tail when eligible
+    double lTailChance,
     int minDepth,
+    int lives,
   }) configForLevel(int level) {
-    // Difficulty curve: starts hard (matching reference ~55 arrows on 14x11)
-    // and scales up from there.
+    // Aggressive difficulty curve.
+    // Level 1 matches reference screenshot (~55 arrows, 14x11).
+    // Level 50 is a massive 24x18 grid with 160 arrows, near-all L-tails,
+    // very long tails, deep chains, and only 1 life.
+    //
+    // Key scaling dimensions:
+    //   Grid:       14x11 → 24x18  (154 → 432 cells, ~2.8x)
+    //   Arrows:     55 → 160       (~2.9x)
+    //   Max tail:   4 → 12         (3x)
+    //   L-tail %:   50% → 90%
+    //   Min depth:  4 → 18
+    //   Lives:      5 → 1
     if (level <= 1) {
-      return (rows: 14, cols: 11, count: 55, maxTail: 5, lTails: true, lTailChance: 0.6, minDepth: 6);
+      return (rows: 14, cols: 11, count: 55, maxTail: 4, lTails: true, lTailChance: 0.50, minDepth: 4, lives: 5);
     }
     if (level <= 3) {
-      return (rows: 14, cols: 11, count: 58, maxTail: 5, lTails: true, lTailChance: 0.6, minDepth: 7);
+      return (rows: 14, cols: 11, count: 60, maxTail: 5, lTails: true, lTailChance: 0.55, minDepth: 5, lives: 5);
     }
     if (level <= 5) {
-      return (rows: 14, cols: 11, count: 62, maxTail: 5, lTails: true, lTailChance: 0.6, minDepth: 7);
+      return (rows: 15, cols: 12, count: 68, maxTail: 5, lTails: true, lTailChance: 0.55, minDepth: 6, lives: 5);
     }
     if (level <= 8) {
-      return (rows: 14, cols: 11, count: 65, maxTail: 6, lTails: true, lTailChance: 0.6, minDepth: 8);
+      return (rows: 16, cols: 12, count: 75, maxTail: 6, lTails: true, lTailChance: 0.60, minDepth: 7, lives: 4);
     }
     if (level <= 12) {
-      return (rows: 14, cols: 11, count: 68, maxTail: 6, lTails: true, lTailChance: 0.65, minDepth: 8);
+      return (rows: 16, cols: 13, count: 82, maxTail: 6, lTails: true, lTailChance: 0.65, minDepth: 8, lives: 4);
     }
     if (level <= 16) {
-      return (rows: 15, cols: 12, count: 72, maxTail: 6, lTails: true, lTailChance: 0.65, minDepth: 9);
+      return (rows: 18, cols: 14, count: 92, maxTail: 7, lTails: true, lTailChance: 0.70, minDepth: 9, lives: 4);
     }
     if (level <= 20) {
-      return (rows: 15, cols: 12, count: 78, maxTail: 7, lTails: true, lTailChance: 0.65, minDepth: 10);
+      return (rows: 18, cols: 14, count: 100, maxTail: 7, lTails: true, lTailChance: 0.70, minDepth: 10, lives: 3);
     }
     if (level <= 25) {
-      return (rows: 15, cols: 12, count: 82, maxTail: 7, lTails: true, lTailChance: 0.65, minDepth: 10);
+      return (rows: 20, cols: 15, count: 110, maxTail: 8, lTails: true, lTailChance: 0.75, minDepth: 12, lives: 3);
     }
     if (level <= 30) {
-      return (rows: 16, cols: 13, count: 88, maxTail: 7, lTails: true, lTailChance: 0.7, minDepth: 11);
+      return (rows: 20, cols: 16, count: 120, maxTail: 9, lTails: true, lTailChance: 0.80, minDepth: 13, lives: 3);
+    }
+    if (level <= 35) {
+      return (rows: 22, cols: 16, count: 130, maxTail: 9, lTails: true, lTailChance: 0.80, minDepth: 14, lives: 2);
     }
     if (level <= 40) {
-      return (rows: 16, cols: 13, count: 95, maxTail: 8, lTails: true, lTailChance: 0.7, minDepth: 12);
+      return (rows: 22, cols: 17, count: 140, maxTail: 10, lTails: true, lTailChance: 0.85, minDepth: 15, lives: 2);
     }
-    return (rows: 16, cols: 13, count: 100, maxTail: 8, lTails: true, lTailChance: 0.7, minDepth: 13);
+    if (level <= 45) {
+      return (rows: 24, cols: 17, count: 150, maxTail: 11, lTails: true, lTailChance: 0.85, minDepth: 16, lives: 2);
+    }
+    // Level 46-50: extreme difficulty
+    return (rows: 24, cols: 18, count: 160, maxTail: 12, lTails: true, lTailChance: 0.90, minDepth: 18, lives: 1);
   }
 
   /// Generate a validated, solvable level.
   ///
   /// Uses a deterministic seed per level so the same level number
   /// always produces the same puzzle layout.
-  ({List<Arrow> arrows, int rows, int cols}) generate(int levelNumber) {
+  ({List<Arrow> arrows, int rows, int cols, int lives}) generate(int levelNumber) {
     final config = configForLevel(levelNumber);
 
     for (var attempt = 0; attempt < 10; attempt++) {
@@ -92,7 +110,7 @@ class LevelGenerator {
         // Check difficulty meets minimum requirements
         if (metrics.maxChainDepth >= config.minDepth ||
             attempt >= 7) {
-          return result;
+          return (arrows: result.arrows, rows: result.rows, cols: result.cols, lives: config.lives);
         }
         // Not challenging enough, regenerate
         continue;
@@ -102,7 +120,8 @@ class LevelGenerator {
 
     // Fallback: generate a simple guaranteed-solvable level
     final fallbackRandom = Random(_baseSeed ?? (levelNumber * 1000 + 99));
-    return _generateSimple(config.rows, config.cols, config.count, fallbackRandom);
+    final fallback = _generateSimple(config.rows, config.cols, config.count, fallbackRandom);
+    return (arrows: fallback.arrows, rows: fallback.rows, cols: fallback.cols, lives: config.lives);
   }
 
   ({List<Arrow> arrows, int rows, int cols}) _generateLevel(
