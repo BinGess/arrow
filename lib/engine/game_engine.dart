@@ -5,8 +5,9 @@ import '../models/game_state.dart';
 class GameEngine {
   final int rows;
   final int cols;
+  final Set<(int, int)> obstacles;
 
-  GameEngine({required this.rows, required this.cols});
+  GameEngine({required this.rows, required this.cols, this.obstacles = const {}});
 
   /// Create initial game state from a list of arrows.
   GameState createInitialState(List<Arrow> arrows, {int lives = 5}) {
@@ -14,6 +15,7 @@ class GameEngine {
       lives: lives,
       maxLives: lives,
       remainingArrows: List.unmodifiable(arrows),
+      obstacles: obstacles,
     );
   }
 
@@ -39,10 +41,16 @@ class GameEngine {
       otherOccupied.addAll(a.occupiedCells);
     }
 
-    // Check the flight path for collisions
+    // Check the flight path for collisions (obstacles and other arrows)
     final path = arrow.flightPath(rows, cols);
     Arrow? hitTarget;
+    bool hitObstacle = false;
     for (final cell in path) {
+      // Obstacle collision
+      if (obstacles.contains(cell)) {
+        hitObstacle = true;
+        break;
+      }
       if (otherOccupied.contains(cell)) {
         // Find which arrow was hit
         hitTarget = state.arrowOccupyingCell(cell.$1, cell.$2);
@@ -51,14 +59,14 @@ class GameEngine {
       }
     }
 
-    if (hitTarget != null) {
+    if (hitObstacle || hitTarget != null) {
       // Collision!
       final newLives = state.lives - 1;
       return (
         state.copyWith(
           lives: newLives,
           lastCollisionId: arrowId,
-          hitArrowId: hitTarget.id,
+          hitArrowId: hitTarget?.id,
           isGameOver: newLives <= 0,
         ),
         TapResult.collision,

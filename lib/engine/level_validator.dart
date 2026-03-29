@@ -9,8 +9,31 @@ import '../models/arrow.dart';
 class LevelValidator {
   /// Check if the puzzle is solvable. Returns the valid removal
   /// order if solvable, or null if unsolvable.
-  static List<int>? findSolution(List<Arrow> arrows, int rows, int cols) {
+  ///
+  /// If [obstacles] is provided, an arrow whose flight path hits an
+  /// obstacle (after all blocking arrows are removed) can never fly out,
+  /// so it's treated as permanently blocked and excluded from the solution.
+  /// However, such arrows can still serve as blockers for other arrows.
+  static List<int>? findSolution(List<Arrow> arrows, int rows, int cols,
+      {Set<(int, int)>? obstacles}) {
     if (arrows.isEmpty) return [];
+
+    final obs = obstacles ?? {};
+
+    // Determine which arrows are obstacle-blocked:
+    // An arrow is obstacle-blocked if its flight path hits an obstacle
+    // AND no other arrow's body sits between it and the obstacle
+    // (i.e. even after all arrows clear, it still can't fly).
+    final obstacleBlocked = <int>{};
+    for (final a in arrows) {
+      final path = a.flightPath(rows, cols);
+      for (final cell in path) {
+        if (obs.contains(cell)) {
+          obstacleBlocked.add(a.id);
+          break;
+        }
+      }
+    }
 
     // Build dependency graph: deps[x] = set of arrow IDs that block x.
     final arrowById = {for (final a in arrows) a.id: a};
@@ -35,6 +58,9 @@ class LevelValidator {
         }
       }
     }
+
+    // Any arrow permanently blocked by obstacles → unsolvable
+    if (obstacleBlocked.isNotEmpty) return null;
 
     // Topological sort (Kahn's algorithm)
     // Arrows with no dependencies can be removed first.
@@ -71,8 +97,11 @@ class LevelValidator {
   }
 
   /// Quick check: is the puzzle solvable?
-  static bool isSolvable(List<Arrow> arrows, int rows, int cols) {
-    return findSolution(arrows, rows, cols) != null;
+  /// If [obstacles] is provided, arrows whose flight path hits an obstacle
+  /// are treated as permanently blocked (infinite in-degree).
+  static bool isSolvable(List<Arrow> arrows, int rows, int cols,
+      {Set<(int, int)>? obstacles}) {
+    return findSolution(arrows, rows, cols, obstacles: obstacles) != null;
   }
 
   /// Compute difficulty metrics for a puzzle.

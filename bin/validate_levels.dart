@@ -26,7 +26,8 @@ void main() {
     final cols = result.cols;
     final config = LevelGenerator.configForLevel(level);
 
-    final solution = LevelValidator.findSolution(arrows, rows, cols);
+    final solution = LevelValidator.findSolution(arrows, rows, cols,
+        obstacles: result.obstacles);
     final metrics = LevelValidator.analyzeMetrics(arrows, rows, cols);
 
     if (solution == null) {
@@ -36,7 +37,7 @@ void main() {
     }
 
     // Verify by simulation
-    if (!_simulateSolution(arrows, rows, cols, solution)) {
+    if (!_simulateSolution(arrows, rows, cols, solution, result.obstacles)) {
       print('FAIL  Level $level: Solution simulation failed!');
       allPassed = false;
       continue;
@@ -69,7 +70,7 @@ void main() {
 
     print('$status L${level.toString().padLeft(2)} '
         '${rows}x${cols.toString().padRight(2)} '
-        '${arrows.length.toString().padLeft(3)}/${config.count.toString().padLeft(3)} arrows '
+        '${arrows.length.toString().padLeft(3)} arrows obs=${result.obstacles.length.toString().padLeft(2)} '
         'free=${freePct.toString().padLeft(2)}%(${metrics.freeAtStart.toString().padLeft(2)}) '
         'head=${headPct.toString().padLeft(2)}% '
         'L=${lPct.toString().padLeft(2)}% '
@@ -103,6 +104,7 @@ void main() {
 
 bool _simulateSolution(
   List<Arrow> arrows, int rows, int cols, List<int> solution,
+  Set<(int, int)> obstacles,
 ) {
   final remaining = {for (final a in arrows) a.id: a};
 
@@ -118,7 +120,7 @@ bool _simulateSolution(
 
     final path = arrow.flightPath(rows, cols);
     for (final cell in path) {
-      if (otherOccupied.contains(cell)) return false;
+      if (otherOccupied.contains(cell) || obstacles.contains(cell)) return false;
     }
 
     remaining.remove(arrowId);

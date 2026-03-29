@@ -16,6 +16,9 @@ class GameState {
   /// Arrows still on the board.
   final List<Arrow> remainingArrows;
 
+  /// Static obstacle cells (immovable walls).
+  final Set<(int, int)> obstacles;
+
   /// IDs of arrows successfully removed (in order).
   final List<int> removedOrder;
 
@@ -32,6 +35,7 @@ class GameState {
     required this.lives,
     this.maxLives = 5,
     required this.remainingArrows,
+    this.obstacles = const {},
     this.removedOrder = const [],
     this.lastCollisionId,
     this.hitArrowId,
@@ -42,6 +46,7 @@ class GameState {
   GameState copyWith({
     int? lives,
     List<Arrow>? remainingArrows,
+    Set<(int, int)>? obstacles,
     List<int>? removedOrder,
     int? lastCollisionId,
     int? hitArrowId,
@@ -53,6 +58,7 @@ class GameState {
       lives: lives ?? this.lives,
       maxLives: maxLives,
       remainingArrows: remainingArrows ?? this.remainingArrows,
+      obstacles: obstacles ?? this.obstacles,
       removedOrder: removedOrder ?? this.removedOrder,
       lastCollisionId:
           clearCollision ? null : (lastCollisionId ?? this.lastCollisionId),

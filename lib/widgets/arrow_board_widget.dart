@@ -40,6 +40,15 @@ class ArrowBoardWidget extends StatelessWidget {
                       size: Size(gridW, gridH),
                       painter: _GridPainter(rows: rows, cols: cols),
                     ),
+                    // Obstacles layer
+                    if (provider.obstacles.isNotEmpty)
+                      CustomPaint(
+                        size: Size(gridW, gridH),
+                        painter: _ObstaclesPainter(
+                          obstacles: provider.obstacles,
+                          cellSize: cellSize,
+                        ),
+                      ),
                     // Static arrows layer
                     CustomPaint(
                       size: Size(gridW, gridH),
@@ -139,6 +148,58 @@ class _GridPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// ─── Obstacles Painter ────────────────────────────────────────────
+
+class _ObstaclesPainter extends CustomPainter {
+  final Set<(int, int)> obstacles;
+  final double cellSize;
+
+  _ObstaclesPainter({required this.obstacles, required this.cellSize});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFF8B7355)
+      ..style = PaintingStyle.fill;
+    final borderPaint = Paint()
+      ..color = const Color(0xFF6B5740)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    final inset = cellSize * 0.1;
+    final rr = cellSize * 0.15;
+
+    for (final (r, c) in obstacles) {
+      final rect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(
+          c * cellSize + inset,
+          r * cellSize + inset,
+          cellSize - inset * 2,
+          cellSize - inset * 2,
+        ),
+        Radius.circular(rr),
+      );
+      canvas.drawRRect(rect, paint);
+      canvas.drawRRect(rect, borderPaint);
+
+      // Cross pattern to indicate immovable
+      final cx = c * cellSize + cellSize / 2;
+      final cy = r * cellSize + cellSize / 2;
+      final s = cellSize * 0.2;
+      final crossPaint = Paint()
+        ..color = const Color(0xFF5A4630)
+        ..strokeWidth = (cellSize * 0.06).clamp(1.0, 3.0)
+        ..strokeCap = StrokeCap.round;
+      canvas.drawLine(Offset(cx - s, cy - s), Offset(cx + s, cy + s), crossPaint);
+      canvas.drawLine(Offset(cx + s, cy - s), Offset(cx - s, cy + s), crossPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ObstaclesPainter oldDelegate) =>
+      obstacles != oldDelegate.obstacles;
 }
 
 // ─── Static Arrows Painter ─────────────────────────────────────────

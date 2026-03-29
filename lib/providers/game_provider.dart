@@ -29,6 +29,8 @@ class GameProvider extends ChangeNotifier {
   GameState? get gameState => _gameState;
 
   List<Arrow> _originalArrows = [];
+  Set<(int, int)> _obstacles = {};
+  Set<(int, int)> get obstacles => _obstacles;
   final Map<int, int> _levelStars = {};
 
   /// Currently flying arrows (supports multiple simultaneous fly-outs).
@@ -71,7 +73,8 @@ class GameProvider extends ChangeNotifier {
     _gridCols = result.cols;
     _currentLives = result.lives;
     _originalArrows = List.of(result.arrows);
-    _engine = GameEngine(rows: _gridRows, cols: _gridCols);
+    _obstacles = result.obstacles;
+    _engine = GameEngine(rows: _gridRows, cols: _gridCols, obstacles: _obstacles);
     _gameState = _engine!.createInitialState(result.arrows, lives: _currentLives);
     _flyingArrows.clear();
     notifyListeners();
@@ -136,6 +139,7 @@ class GameProvider extends ChangeNotifier {
 
   void resetLevel() {
     if (_engine == null) return;
+    _engine = GameEngine(rows: _gridRows, cols: _gridCols, obstacles: _obstacles);
     _gameState = _engine!.createInitialState(_originalArrows, lives: _currentLives);
     _flyingArrows.clear();
     notifyListeners();

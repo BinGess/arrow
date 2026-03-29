@@ -19,7 +19,8 @@ void main() {
             reason: 'Level $level has no arrows');
 
         // Must be solvable
-        final solution = LevelValidator.findSolution(arrows, rows, cols);
+        final solution = LevelValidator.findSolution(arrows, rows, cols,
+            obstacles: result.obstacles);
         expect(solution, isNotNull,
             reason: 'Level $level is NOT solvable!');
 
@@ -58,6 +59,7 @@ void main() {
           final result = gen.generate(level);
           final solvable = LevelValidator.isSolvable(
             result.arrows, result.rows, result.cols,
+            obstacles: result.obstacles,
           );
           expect(solvable, true,
               reason: 'Seed $seed, level $level is NOT solvable');
